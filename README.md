@@ -1,139 +1,63 @@
-# StepUp
-Rian Silva Muniz 10747955
-Matheus Junetti Sevciuc Machado 10408848
+🎸 SetFlow — Gerenciador Inteligente de Repertório e Setlist
+📌 Visão Geral
 
-StepUp — Organizador de Estudos e Tarefas para Alunos do Mackenzie
+O SetFlow é um sistema web para músicos e bandas organizarem seu repertório e montarem setlists de ensaio ou apresentação em segundos. Além de cadastrar músicas com tom, BPM, duração, observações de timbre/patch e cifras anexadas, o sistema sugere a melhor ordem de execução das músicas escolhidas, evitando transições de tom abruptas e avisando quando a duração total do set ultrapassa o tempo disponível.
 
-O StepUp é um sistema web que acompanha o aluno do Mackenzie do início ao fim do semestre: suas disciplinas, o conteúdo de cada uma, as atividades e provas pendentes, e o desempenho nas avaliações já realizadas. Com base nesses dados, o sistema identifica onde o aluno mais precisa de apoio, gera um plano de estudos personalizado e exibe em um painel os prazos de entregas e provas — sempre considerando que a média mínima para aprovação é 6,0.
+Este projeto é desenvolvido para a disciplina Modelagem e Desenvolvimento de Software, seguindo a abordagem Spec-Driven Development (SDD), com requisitos especificados em formato EARS (Easy Approach to Requirements Syntax).
 
-Perfil de Usuário
-Aluno: cadastra suas disciplinas no início do semestre, registra o conteúdo de estudo (com nível de dificuldade), as atividades/provas pendentes (com data e peso) e lança as notas conforme são divulgadas. Acompanha, em um painel, o risco de cada disciplina, o que priorizar e recebe um plano de estudos gerado automaticamente.
- StepUp — Organizador de Estudos e Tarefas para Alunos do Mackenzie
+👥 Perfis de Usuário
+Líder/Regente: cadastra as músicas do repertório (tom, BPM, duração, observações, cifra), cria setlists para ensaios/apresentações, ajusta a ordem sugerida pelo sistema e confirma o setlist final.
+Músico da banda: visualiza os setlists confirmados, acessa a cifra e as observações de cada música, e marca seu nível de domínio (sei bem / preciso revisar / não sei) em cada uma.
+🎯 O Motor Central: Ordenação Inteligente de Setlist
 
-Visão Geral
+Ao montar um setlist, o sistema analisa a lista de músicas escolhidas e sugere uma ordem que minimize transições bruscas de tom entre músicas consecutivas.
 
-O StepUp é um sistema web que acompanha o aluno do Mackenzie **do início ao
-fim do semestre**: suas disciplinas, o conteúdo de cada uma, as atividades e
-provas pendentes, e o desempenho nas avaliações já realizadas. Com base nesses
-dados, o sistema identifica onde o aluno mais precisa de apoio, gera um plano de
-estudos personalizado e exibe em um painel os prazos de entregas e provas —
-sempre considerando que a média mínima para aprovação é **6,0**.
+Cálculo de distância entre tons
 
-Este projeto é desenvolvido para a disciplina **Modelagem e Desenvolvimento de
-Software**, seguindo a abordagem **Spec-Driven Development (SDD)**, com requisitos
-especificados em formato **EARS** (Easy Approach to Requirements Syntax).
+As 12 notas musicais formam um ciclo (círculo cromático). A distância entre dois tons é o menor número de semitons entre eles, percorrendo o ciclo em qualquer direção (ex.: de C para C# é 1 semitom; de C para F# é a distância máxima possível, 6 semitons).
 
-## Perfil de Usuário
+distância(tomA, tomB) = min(|posição(tomA) − posição(tomB)|, 12 − |posição(tomA) − posição(tomB)|)
+Regra de transição abrupta
 
-- Aluno: cadastra suas disciplinas no início do semestre, registra o conteúdo
-  de estudo (com nível de dificuldade), as atividades/provas pendentes (com data
-  e peso) e lança as notas conforme são divulgadas. Acompanha, em um painel, o
-  risco de cada disciplina, o que priorizar e recebe um plano de estudos
-  gerado automaticamente.
+Se a distância entre os tons de duas músicas consecutivas no setlist for maior que um limiar definido (ex.: 5 semitons — a calibrar pela equipe), o sistema sinaliza essa transição como abrupta, permitindo ao líder reordenar antes de confirmar.
 
-O sistema tem um único perfil de acesso. A diversidade de uso é tratada via
-personas (dois perfis de comportamento de aluno, documentados em
-`/docs/personas.md`), não via papéis distintos no sistema.
+Verificação de duração
 
-O Motor Central: Desempenho + Urgência
+O sistema soma a duração de todas as músicas do setlist e compara com o tempo total disponível informado pelo líder (ex.: duração do ensaio ou do show), avisando caso o setlist ultrapasse esse tempo.
 
-O núcleo do sistema combina dois eixos para decidir o que o aluno mais precisa
-estudar agora.
+🔄 Estados do Setlist
 
-1. Risco de desempenho
+Cada setlist criado segue este fluxo:
 
-Quanto o aluno precisa tirar nas avaliações restantes de uma disciplina para
-fechar a média mínima de 6,0:
+Rascunho → Confirmado → Tocado
+Rascunho: o líder ainda está montando/reordenando as músicas.
+Confirmado: a ordem está fechada; músicos da banda podem visualizar.
+Tocado: o setlist foi usado em um ensaio/apresentação (permite histórico).
+🎼 Domínio da Música por Músico
 
-```
-nota_necessária_restante = (6.0 − soma_ponderada_das_notas_já_obtidas) / peso_restante
-```
+Cada músico da banda pode marcar, por música, seu nível de domínio:
 
-| Faixa de risco | Condição |
-|---|---|
-| Baixo | nota necessária ≤ 6,0 |
-| Alto | nota necessária entre 6,01 e 10,0 |
-| Crítico | nota necessária > 10,0 (impossível de recuperar só com notas) |
+Não Sei → Preciso Revisar → Sei Bem
 
- 2. Urgência de prazo
+Isso não afeta a ordem do setlist — é uma informação pessoal de cada músico, visível apenas a ele e ao líder, para ajudar na preparação antes do ensaio.
 
-Dias até a próxima atividade/prova pendente da disciplina:
+Regras de Negócio Principais
+RB-01 — Distância entre tons: a distância entre dois tons é sempre o menor caminho no ciclo cromático de 12 semitons.
+RB-02 — Transição abrupta: uma transição entre músicas consecutivas é considerada abrupta se a distância de tom for maior que [definir limiar, ex.: 5 semitons].
+RB-03 — Duração do setlist: a duração total de um setlist é a soma das durações de todas as músicas que o compõem.
+RB-04 — Confirmação exclusiva do líder: apenas o perfil Líder/Regente pode reordenar músicas e confirmar um setlist.
+RB-05 — Transição de estado do setlist: um setlist só pode ser marcado como Tocado se já estiver Confirmado.
+RB-06 — Domínio individual: o nível de domínio de uma música é sempre pessoal por músico, nunca compartilhado como uma média da banda.
 
-| Faixa de urgência | Condição |
-|---|---|
-| Baixa | mais de 7 dias |
-| Média | entre 3 e 7 dias |
-| Alta | menos de 3 dias |
+Nota de escopo (MVP): o sistema não processa áudio nem arquivos de partitura — cifras e observações são texto/anexos simples. A sugestão de ordem é baseada apenas em tom e duração; critérios adicionais (energia, gênero, andamento/BPM) podem ser incorporados em versões futuras.
 
- Matriz de Prioridade
+🛠️ Tecnologias e Arquitetura
+Documentação e specs: Spec-Driven Development (SDD) em formato EARS, organizada em /docs.
+Back-end: Node.js ou Python (definir stack com o grupo).
+Front-end: React ou HTML5 + CSS3 (definir com o grupo).
+Banco de dados: PostgreSQL ou SQLite, para persistir músicas, setlists e domínio por músico.
+Gestão do projeto: GitHub Issues, Pull Requests revisados e Project Board (Kanban).
 
-O cruzamento das duas faixas define a prioridade final de estudo de cada
-disciplina:
+.specify/ — specs, planos e tasks de apoio ao agente de codificação.
 
-| Risco ↓ / Urgência → | Baixa | Média | Alta |
-|---|---|---|---|
-| **Baixo** | Baixa | Baixa | Média |
-| **Alto** | Média | Alta | Alta |
-| **Crítico** | Alta | Crítica | Crítica |
-
-Plano de Estudos Personalizado
-
-Além de priorizar disciplinas, o StepUp gera um **plano de estudos** que
-distribui o tempo disponível do aluno entre os tópicos de conteúdo pendentes,
-combinando dois fatores:
-
-- **Prioridade da disciplina** (matriz acima).
-- **Dificuldade do tópico**: começa como uma autoavaliação do aluno (baixa /
-  média / alta) ao cadastrar o tópico, e é **recalculada automaticamente**
-  depois que uma nota relacionada é lançada (nota baixa eleva a dificuldade).
-
-Fórmula de distribuição de tempo
-
-Cada faixa de prioridade e de dificuldade recebe um peso numérico fixo (ex.:
-crítica/alta = 4, alta/média = 3, média/baixa = 2, baixa = 1 — valores exatos a
-calibrar pela equipe). O tempo total informado pelo aluno é distribuído
-proporcionalmente:
-
-```
-peso_do_tópico = peso_prioridade_disciplina × peso_dificuldade_tópico
-tempo_alocado_ao_tópico = (peso_do_tópico / soma_de_todos_os_pesos) × tempo_total_disponível
-```
-
-O plano gerado é **determinístico** (sem uso de IA generativa): dado o mesmo
-conjunto de disciplinas, prioridades, dificuldades e tempo disponível, o
-resultado é sempre o mesmo — o que o torna diretamente testável.
-
-Painel do Aluno
-
-O painel principal exibe, sempre atualizado:
-
-- Quantas atividades/provas o aluno tem pendentes no momento.
-- Prazos se aproximando (entregas e datas de prova), ordenados por urgência.
-- Disciplinas e tópicos priorizados para estudo, segundo a matriz de prioridade.
-- O plano de estudos gerado para o período informado pelo aluno.
-
-Estados das Atividades/Avaliações
-
-Cada atividade ou prova pendente de uma disciplina segue este fluxo:
-
-```
-Pendente → Em Andamento → Entregue → Avaliada
-```
-
-Ao marcar uma atividade como `Avaliada`, o aluno registra a nota obtida, e o
-sistema recalcula automaticamente a nota necessária restante, a prioridade da
-disciplina e a dificuldade dos tópicos relacionados.
-
- Estados dos Tópicos de Estudo
-
-Cada tópico de conteúdo de uma disciplina segue este fluxo:
-
-```
-Não Iniciado → Em Estudo → Revisado → Dominado
-```
-
-A prioridade de um tópico (baixa / média / alta / crítica) é derivada da
-matriz de prioridade da disciplina à qual pertence. A **dificuldade** do tópico
-é um atributo independente, usado apenas pelo motor de geração do plano de
-estudos.
-
+Esta estrutura atende às exigências de documentação inicial da Semana 1 da disciplina: visão do produto, perfis de usuário, regras de negócio explícitas e link para a especificação completa em /docs.

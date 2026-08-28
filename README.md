@@ -1,4 +1,4 @@
-# modelagem_de_sistema
+# StepUp
 Rian Silva Muniz 10747955
 Matheus Junetti Sevciuc Machado 10408848
 

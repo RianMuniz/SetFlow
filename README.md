@@ -1,9 +1,15 @@
 🎸 SetFlow — Gerenciador Inteligente de Repertório e Setlist
+
+👥 Desenvolvido por: 
+
+Rian Silva Muniz - 10747955
+Matheus Junetti Sevciuc Machado - 10408848
+
+
 📌 Visão Geral
 
 O SetFlow é um sistema web para músicos e bandas organizarem seu repertório e montarem setlists de ensaio ou apresentação em segundos. Além de cadastrar músicas com tom, BPM, duração, observações de timbre/patch e cifras anexadas, o sistema sugere a melhor ordem de execução das músicas escolhidas, evitando transições de tom abruptas e avisando quando a duração total do set ultrapassa o tempo disponível.
 
-Este projeto é desenvolvido para a disciplina Modelagem e Desenvolvimento de Software, seguindo a abordagem Spec-Driven Development (SDD), com requisitos especificados em formato EARS (Easy Approach to Requirements Syntax).
 
 👥 Perfis de Usuário
 Líder/Regente: cadastra as músicas do repertório (tom, BPM, duração, observações, cifra), cria setlists para ensaios/apresentações, ajusta a ordem sugerida pelo sistema e confirma o setlist final.

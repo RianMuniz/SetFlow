@@ -1,0 +1,12 @@
+{
+  "name": "setflow",
+  "version": "1.0.0",
+  "description": "Sistema de gestão e otimização de setlists para bandas",
+  "main": "src/setlistService.js",
+  "scripts": {
+    "test": "node tests/setlistService.test.js"
+  },
+  "keywords": [],
+  "author": "Rian Muniz",
+  "license": "ISC"
+}

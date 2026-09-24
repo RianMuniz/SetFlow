@@ -2,9 +2,9 @@
 
 👥 Desenvolvido por: 
 
-Rian Silva Muniz - 10747955
 Matheus Junetti Sevciuc Machado - 10408848
 
+Rian Silva Muniz - 10747955
 
 📌 Visão Geral
 

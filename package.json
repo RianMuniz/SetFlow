@@ -4,7 +4,7 @@
   "description": "Sistema de gestão e otimização de setlists para bandas",
   "main": "src/setlistService.js",
   "scripts": {
-    "test": "node tests/setlistService.test.js"
+    "test": "node src/tests/authService.test.js && node src/tests/setlistService.test.js"
   },
   "keywords": [],
   "author": "Rian Muniz",

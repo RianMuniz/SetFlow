@@ -1,5 +1,6 @@
 const assert = require('assert');
 const {
+  SESSION_TTL_MS,
   createUser,
   authenticateUser,
   requireAuthentication,
@@ -73,6 +74,19 @@ console.log('🧪 Iniciando testes unitários da SPEC-001 (Autenticação)...\n'
   assert.ok(salt, 'Salt deveria ser gerado.');
   assert.ok(hash, 'Hash deveria ser gerado.');
   console.log('✅ Critério 7 passou: hash da senha gerado corretamente.');
+})();
+
+(function testSessionTtl() {
+  const users = [
+    createUser({ id: 'u-5', email: 'tempo@teste.com', password: 'senha123' })
+  ];
+
+  const session = authenticateUser(users, 'tempo@teste.com', 'senha123');
+  const ttl = new Date(session.expiresAt).getTime() - new Date(session.createdAt).getTime();
+
+  assert.strictEqual(ttl, SESSION_TTL_MS, 'Sessão deve usar o TTL configurado.');
+  assert.strictEqual(SESSION_TTL_MS, 24 * 60 * 60 * 1000, 'TTL da sessão deve ser de 24 horas.');
+  console.log('✅ Critério 8 passou: sessão usa TTL de 24 horas.');
 })();
 
 console.log('\n🎉 Todos os testes da SPEC-001 passaram com sucesso!');

@@ -6,6 +6,26 @@ Matheus Junetti Sevciuc Machado - 10408848
 
 Rian Silva Muniz - 10747955
 
+## Executar localmente (MVP atual)
+
+```bash
+npm install
+npm start
+```
+
+Servidor de autenticação (SPEC-001) disponível em:
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+
+Para rodar os testes:
+
+```bash
+npm test
+```
+
 📌 Visão Geral
 
 O SetFlow é um sistema web para músicos e bandas organizarem seu repertório e montarem setlists de ensaio ou apresentação em segundos. Além de cadastrar músicas com tom, BPM, duração, observações de timbre/patch e cifras anexadas, o sistema sugere a melhor ordem de execução das músicas escolhidas, evitando transições de tom abruptas e avisando quando a duração total do set ultrapassa o tempo disponível.

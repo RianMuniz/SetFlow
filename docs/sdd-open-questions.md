@@ -22,4 +22,13 @@ Todas as decisões relevantes da baseline foram aprovadas e registradas conforme
 
 ## Situação final
 
-A baseline foi estabilizada para a geração das Specs. Não há mais questões pendentes na fase de preparação do SDD para este MVP.
+A baseline foi estabilizada para a geração das Specs.
+
+## Decisões fechadas na SPEC-001
+
+- Forma de autenticação: sessão HTTP com cookie.
+- Expiração da sessão: 24 horas, sem renovação automática.
+- Cadastro de usuário: público.
+- Rate limiting de login: 5 tentativas inválidas por IP + e-mail normalizado em 15 minutos, com bloqueio na 6ª tentativa.
+- Contrato de erro da API: envelope JSON padronizado com `error.code` e `error.message`.
+- Stack da implementação da SPEC-001: Node.js com JavaScript/CommonJS e Express.

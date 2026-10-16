@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 
-const SESSION_TTL_MS = 60 * 60 * 1000;
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
@@ -29,8 +29,14 @@ function verifyPassword(password, salt, expectedHash) {
     return false;
   }
 
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
-  return hash === expectedHash;
+  const hashBuffer = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  const expectedHashBuffer = Buffer.from(expectedHash, 'hex');
+
+  if (hashBuffer.length !== expectedHashBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(hashBuffer, expectedHashBuffer);
 }
 
 function createSession(user) {

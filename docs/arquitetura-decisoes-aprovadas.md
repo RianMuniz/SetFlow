@@ -40,6 +40,7 @@ Documento que consolida todas as decisões arquiteturais já tomadas (ADRs e Dri
 - **Frontend:** HTML5 + CSS3 (OPEN-02 ✅ Aprovado)
 - **Banco de Dados:** PostgreSQL (OPEN-03 ✅ Aprovado)
 - **Arquitetura:** Monolítica em camadas (API REST + SPA)
+- **Implementação vigente da SPEC-001:** Node.js + JavaScript/CommonJS + Express (decisão operacional para manter compatibilidade do código atual).
 
 ### Regras de Negócio Consolidadas
 - **Limiar de Transição:** 5 semitons, configurável por banda (OPEN-04 ✅ Aprovado)
@@ -196,3 +197,12 @@ Documento que consolida todas as decisões arquiteturais já tomadas (ADRs e Dri
 | Soft/hard delete | Estratégia de remoção | ⏳ Em aberto | Média |
 
 Próximo passo: resolver as questões em aberto com prioridade Alta antes de iniciar implementação.
+
+## Decisões resolvidas na implementação da SPEC-001
+
+- **Autenticação:** sessão HTTP no servidor, identificada por cookie.
+- **Cookie de sessão:** `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` apenas em produção.
+- **Expiração de sessão:** 24 horas, sem renovação automática.
+- **Cadastro de usuário:** público (self-signup).
+- **Rate limiting:** 5 tentativas inválidas por `IP + e-mail normalizado` em janela de 15 minutos; bloqueio na 6ª tentativa com `HTTP 429`; limpeza após login bem-sucedido.
+- **Padrão de erro da API:** envelope JSON `{ "error": { "code": "...", "message": "..." } }`.

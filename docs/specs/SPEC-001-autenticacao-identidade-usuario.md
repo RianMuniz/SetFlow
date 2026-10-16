@@ -4,217 +4,182 @@
 
 - **ID:** SPEC-001
 - **Nome:** Autenticação e Identidade do Usuário
-- **Objetivo:** Permitir que um usuário se autentique com credenciais válidas, inicie sessão e tenha identidade reconhecida pelo sistema para acesso às funcionalidades protegidas.
-- **Valor entregue:** Garante acesso controlado ao sistema e estabelece a base para isolamento por banda, autorização por papel e uso seguro das operações do SetFlow.
+- **Objetivo:** Permitir cadastro público, autenticação por sessão HTTP e identificação segura do usuário autenticado.
+- **Status:** Implementada no MVP com JavaScript/CommonJS e Express.
 
-## 2. Rastreabilidade
+## 2. Decisões consolidadas desta Spec
 
-### Requisitos Funcionais
-- RF-01 — Autenticação. WHEN o usuário submete credenciais corretas, o sistema SHALL iniciar a sessão. IF as credenciais são inválidas, THEN o sistema SHALL recusar o acesso e exibir mensagem de erro.
-
-### Regras de Negócio
-- RB-08 — Múltiplos vínculos. Um usuário pode ser líder em uma ou mais bandas e músico em uma ou mais bandas simultaneamente, com dados independentes entre elas.
-
-### Requisitos Não Funcionais
-- RNF-01 — Desempenho. Ações principais devem responder em menos de 2 segundos.
-- RNF-03 — Segurança. O sistema SHALL armazenar senhas com hash e proteger contra CSRF e XSS.
-
-### Caso de uso / fluxo
-- Pré-condições do UC-01 — Gerar Setlist Sugerido.
-- Fluxos de acesso da Persona 1 (Lucas Andrade) e Persona 2 (Beatriz Ramos).
-
-### Entidades do modelo conceitual
-- Usuário
-
-### Drivers arquiteturais
-- DA-02 — Isolamento Multi-tenant por Banda.
-
-### ADRs
-- Nenhuma ADR específica identificada para autenticação; a decisão de tecnologia foi registrada em OPEN-01 e OPEN-02.
+- Autenticação via **sessão HTTP no servidor** com **cookie**.
+- Cookie de sessão com:
+  - `HttpOnly=true`
+  - `SameSite=Lax`
+  - `Path=/`
+  - `Secure=true` somente em produção.
+- **TTL da sessão: 24 horas**, sem renovação automática.
+- Cadastro de usuário é **público**.
+- Rate limiting no login: **5 tentativas inválidas** por combinação `IP + e-mail normalizado` em **15 minutos**; a **6ª tentativa** dentro da janela retorna `HTTP 429`.
+- Login bem-sucedido limpa o contador do rate limiting para a chave correspondente.
+- Senhas nunca são persistidas em texto claro; uso de PBKDF2 + salt e comparação segura.
+- Usuário inativo/bloqueado não autentica.
+- Usuário sem banda associada pode autenticar normalmente.
 
 ## 3. Escopo
 
 ### Incluído
-- Autenticação de usuário com credencial e senha.
-- Validação de credenciais.
-- Início de sessão para usuário autenticado.
-- Resposta explícita para erro de autenticação.
-- Manutenção da identidade do usuário durante a sessão.
-- Associação da sessão ao usuário autenticado para uso em operações posteriores.
+- Endpoints REST JSON:
+  - `POST /api/auth/register`
+  - `POST /api/auth/login`
+  - `POST /api/auth/logout`
+  - `GET /api/auth/me`
+- Sessão no servidor e cookie com identificador aleatório imprevisível.
+- Contrato de erros padronizado.
+- Tratamento de JSON inválido e validações de payload.
 
 ### Fora do escopo
-- Criação e gestão de bandas.
-- Cadastro de músicas e setlists.
-- Configuração de limiar de transição.
-- Funcionalidades de roles ou permissões complexas além do papel do usuário em banda.
-- Recuperação de senha, autenticação social, MFA ou SSO.
-- Persistência física ou escolha de stack tecnológica além da decisão já registrada em OPEN-01.
+- Recuperação de senha, MFA, SSO e autenticação social.
+- Gestão de banda, repertório, setlist e demais Specs (SPEC-002+).
+- Persistência em banco relacional nesta etapa (MVP em memória com abstrações injetáveis).
 
-## 4. Dependências
+## 4. Contratos HTTP implementados
 
-- Decisão registrada em OPEN-01: backend em Node.js + TypeScript.
-- Decisão registrada em OPEN-02: frontend em HTML5 + CSS3.
-- Decisão registrada em OPEN-03: banco de dados relacional PostgreSQL.
-- Decisão registrada em OPEN-11: contratos de API definidos nas Specs individuais.
-- Esta Spec depende de acordo explícito sobre a forma de autenticação, mas não define tecnologia além da base já aprovada.
+## `POST /api/auth/register`
 
-## 5. Comportamento esperado
+### Entrada (JSON)
+```json
+{
+  "email": "maria@teste.com",
+  "password": "senha1234"
+}
+```
 
-### Pré-condições
-- O usuário possui cadastro válido no sistema.
-- O sistema possui credenciais armazenadas de forma segura.
-- O usuário acessa a tela ou endpoint de autenticação.
+### Regras
+- `email`: obrigatório, normalizado (trim + lowercase), formato válido.
+- `password`: obrigatória, string com 8 a 128 caracteres.
+- E-mail duplicado é rejeitado.
+- Usuário criado com `status: "active"`.
+- Sessão iniciada automaticamente após cadastro.
 
-### Fluxo principal
-1. O usuário informa e-mail/usuário e senha.
-2. O sistema valida as credenciais informadas.
-3. Se as credenciais forem válidas, o sistema inicia a sessão para esse usuário.
-4. O sistema identifica o usuário autenticado para operações subsequentes.
-5. O sistema concede acesso ao ambiente do usuário conforme as bandas às quais ele pertence.
+### Saída de sucesso (`201`)
+```json
+{
+  "user": {
+    "id": "u-1",
+    "email": "maria@teste.com",
+    "status": "active"
+  }
+}
+```
 
-### Fluxos alternativos
-- **FA-01 — Credenciais inválidas:** o sistema recusa autenticação e retorna mensagem de erro sem iniciar sessão.
-- **FA-02 — Usuário sem banda associada:** o sistema ainda permite autenticação, porém o usuário entra com acesso limitado e sem contexto de banda ativa.
+## `POST /api/auth/login`
 
-### Fluxos de exceção
-- **EX-01 — Usuário bloqueado ou inativo:** se o usuário estiver bloqueado ou desabilitado, o sistema recusa login e informa que o acesso foi negado.
-- **EX-02 — Falha de persistência na validação:** se a consulta à credencial falhar, o sistema não inicia a sessão e retorna erro de autenticação seguro.
+### Entrada (JSON)
+```json
+{
+  "email": "maria@teste.com",
+  "password": "senha1234"
+}
+```
 
-### Pós-condições
-- Usuário autenticado com sessão ativa, se as credenciais forem válidas.
-- Nenhuma sessão inicializada para credenciais inválidas.
-- Identidade do usuário disponível para as camadas subsequentes do sistema.
+### Regras
+- Valida payload e rate limit por `IP + e-mail normalizado`.
+- E-mail inexistente e senha incorreta retornam mesmo erro genérico.
+- Usuário inativo/bloqueado retorna erro específico.
+- No sucesso, mantém apenas uma sessão válida por usuário.
 
-## 6. Regras e invariantes
+### Saída de sucesso (`200`)
+```json
+{
+  "user": {
+    "id": "u-1",
+    "email": "maria@teste.com",
+    "status": "active"
+  }
+}
+```
 
-- **INV-001:** Nenhuma senha em texto claro pode ser persistida. A senha deve ser armazenada em formato hash.
-- **INV-002:** Um usuário só pode iniciar sessão quando sua identidade for validada com sucesso.
-- **INV-003:** Credenciais inválidas não devem criar sessão ou token ativo.
-- **INV-004:** O sistema deve associar a sessão ao usuário autenticado de forma unívoca.
-- **INV-005:** A sessão deve ser vinculada ao contexto do usuário e não a uma banda arbitrária sem autorização.
-- **INV-006:** O sistema deve rejeitar acesso quando o usuário estiver sem status válido para autenticação.
-- **INV-007:** Usuário autenticado pode seguir para operações protegidas, mas não pode acessar dados de bandas às quais não pertence.
+## `POST /api/auth/logout`
 
-Todas as invariantes acima são verificáveis por testes e por inspeção de comportamento do sistema autenticado.
+### Regras
+- Invalida sessão no servidor quando existir.
+- Limpa cookie de sessão.
+- É seguro quando sessão já não existe.
 
-## 7. Modelo de domínio envolvido
+### Saída de sucesso (`200`)
+```json
+{
+  "success": true
+}
+```
 
-### Entidade: Usuário
-- **Atributos relevantes:**
-  - id
-  - nome
-  - e-mail
-  - senha (hash)
-- **Restrições relevantes:**
-  - Um usuário é identificado de forma única por `id`.
-  - `e-mail` deve ser único no sistema, se esta regra não for explicitamente desviada.
-  - A senha não pode ser armazenada em texto puro.
+## `GET /api/auth/me`
 
-### Relacionamentos relevantes
-- Um Usuário pode ter múltiplos vínculos em várias bandas por meio de Membro.
+### Regras
+- Lê cookie de sessão.
+- Valida existência da sessão, expiração e status do usuário.
+- Retorna somente representação pública.
+- Sessão ausente/inválida/expirada é rejeitada.
 
-## 8. Impacto arquitetural
+### Saída de sucesso (`200`)
+```json
+{
+  "user": {
+    "id": "u-1",
+    "email": "maria@teste.com",
+    "status": "active"
+  }
+}
+```
 
-### Módulos envolvidos
-- Camada de apresentação: tela ou formulário de login.
-- Camada de aplicação: serviço de autenticação e autenticação de sessão.
-- Camada de persistência: repositório de usuários e armazenamento de hash.
+## 5. Contrato de erro
 
-### Fronteiras arquiteturais
-- A autenticação é boundary entre identidade externa e acesso protegido ao sistema.
-- A camada de aplicação recebe as credenciais, valida e retorna um resultado de autenticação.
-- Persistência deve expor apenas operações de leitura da credencial e status do usuário.
+Formato padrão:
+```json
+{
+  "error": {
+    "code": "CODIGO",
+    "message": "Mensagem"
+  }
+}
+```
 
-### Responsabilidades
-- **Frontend:** capturar credenciais e reportar erros de validação.
-- **Backend:** validar credenciais, aplicar hash e iniciar sessão.
-- **Persistência:** armazenar e consultar credenciais e dados mínimos do usuário.
+Códigos implementados:
+- `VALIDATION_ERROR`
+- `EMAIL_ALREADY_EXISTS`
+- `INVALID_CREDENTIALS`
+- `ACCOUNT_INACTIVE`
+- `AUTHENTICATION_REQUIRED`
+- `SESSION_EXPIRED`
+- `RATE_LIMIT_EXCEEDED`
+- `INTERNAL_ERROR`
 
-### ADRs que restringem a solução
-- A decisão registrada em OPEN-01 (Node.js + TypeScript) e OPEN-03 (PostgreSQL) define a base de implementação, mas não altera o comportamento de autenticação.
+## 6. Segurança e invariantes
 
-## 9. Contratos necessários
+- Não expor `password`, `passwordHash` ou `passwordSalt` em respostas.
+- Não armazenar dados do usuário no cookie; cookie carrega apenas `sessionId`.
+- Identificador de sessão gerado com `crypto.randomBytes`.
+- Comparação de senha com `crypto.timingSafeEqual`.
+- Não diferenciar usuário inexistente de senha incorreta no login (`INVALID_CREDENTIALS`).
 
-Como a baseline ainda não define contrato formal completo de autenticação, a especificação deve registrar a ausência de detalhes. O contrato deve ser definido em uma Spec posterior ou em um decisão operacional, conforme OPEN-11.
+## 7. Critérios de aceitação verificados
 
-### Contrato conceitual de entrada
-- `email` ou `usuario`
-- `senha`
+- Cadastro válido e inválido.
+- Cadastro com e-mail duplicado.
+- Login válido e inválido (erro genérico para credenciais inválidas).
+- Usuário bloqueado/inativo não autentica.
+- Senha não persistida em plaintext.
+- Cookie com flags esperadas.
+- Sessão de 24 horas e sessão expirada.
+- `/api/auth/me` com e sem autenticação.
+- Logout com invalidação de sessão.
+- Rate limit: 5 falhas permitidas, 6ª bloqueada.
+- Limpeza do rate limit após login válido.
+- Ausência de dados sensíveis nas respostas.
+- Tratamento de JSON inválido e validação de payload.
 
-### Contrato conceitual de saída
-- Sucesso: sessão iniciada e identidade do usuário reconhecida.
-- Erro: mensagem de autenticação inválida.
+## 8. Definition of Done da Spec
 
-### Erros necessários
-- Credenciais inválidas.
-- Usuário inexistente.
-- Usuário bloqueado/inativo.
-- Falha de persistência ou indisponibilidade de consulta.
-
-### Registro de ausência de definição
-- **OPEN-XX — contrato de API completo de autenticação:** a baseline não definiu verbos HTTP, payload exato, token ou sessão em detalhamento suficiente para se transformar em contrato formal de API. Deve ser definido antes da implementação.
-
-## 10. Requisitos não funcionais aplicáveis
-
-- **RNF-01 — Desempenho:** O login deve responder em menos de 2 segundos para cenários de uso normal.
-  - Verificação: testes de carga e tempo de resposta em operações de autenticação.
-- **RNF-03 — Segurança:** Senhas em hash, prevenção de XSS/CSRF e ausência de vazamento de credenciais em resposta.
-  - Verificação: revisão de implementação, testes de segurança e validação de forma de armazenamento.
-
-## 11. Critérios de aceitação
-
-### Critério 1 — Login com credenciais válidas
-- **Dado** que um usuário existe e suas credenciais são corretas
-- **Quando** o usuário submete as credenciais no formulário ou endpoint de autenticação
-- **Então** o sistema deve iniciar a sessão e permitir o acesso às funcionalidades protegidas
-
-### Critério 2 — Login com credenciais inválidas
-- **Dado** que o usuário forneceu uma senha incorreta ou e-mail inexistente
-- **Quando** tenta autenticar
-- **Então** o sistema deve rejeitar a autenticação e não criar sessão
-
-### Critério 3 — Armazenamento de senha
-- **Dado** que uma senha foi cadastrada no sistema
-- **Quando** a informação for persistida
-- **Então** a senha deve ser armazenada em formato hash e não em texto claro
-
-### Critério 4 — Sessão associada ao usuário correto
-- **Dado** que duas pessoas diferentes existem no sistema
-- **Quando** cada uma autentica
-- **Então** a sessão deve ser identificada apenas com a identidade correta de cada usuário
-
-### Critério 5 — Usuário sem status válido
-- **Dado** que um usuário está bloqueado ou inativo
-- **Quando** tenta se autenticar
-- **Então** o sistema deve negar o acesso e exibir erro apropriado
-
-## 12. Casos de teste derivados
-
-1. Login bem-sucedido com usuário e senha corretos.
-2. Login com senha errada.
-3. Login com e-mail inexistente.
-4. Verificação de que nenhuma sessão é criada após erro de autenticação.
-5. Verificação de que a senha armazenada não é legível em plaintext.
-6. Verificação de que o usuário autenticado recebe a sessão correta.
-7. Verificação de que usuário bloqueado é negado.
-8. Verificação do tempo de resposta da autenticação sob carga leve.
-
-## 13. Questões em aberto
-
-- **OPEN-XX — contrato de autenticação formal:** o baseline não define verbos, payload, formato de token ou estratégia de sessão de forma suficiente para contrato completo de API.
-- **OPEN-XX — política de bloqueio/reativação:** a baseline não define como um usuário passa a estar inativo ou bloqueado, nem em quais casos a sessão deve expirar.
-- **OPEN-XX — sessão e expiração:** a baseline não explicitou regra de expiração de sessão, limite de tempo e renovação.
-
-## 14. Definition of Done da Spec
-
-A Spec SPEC-001 estará concluída quando:
-- todos os critérios de aceitação estiverem implementados;
-- todas as invariantes estiverem preservadas;
-- os testes derivados estiverem aprovados;
-- os RNFs aplicáveis forem verificados;
-- não houver divergência conhecida entre implementação e esta Spec;
-- e toda divergência em relação à baseline tiver sido explicitamente analisada e documentada.
-
-## 15. Observação final
-
-A autenticação é a base para todas as capacidades do sistema e deve ser tratada como uma fronteira de segurança e identidade. Neste MVP, a proposta é preservar o comportamento mínimo necessário: validar usuários, manter sessão e impedir qualquer operação protegida sem identidade autenticada e autorizada.
+A SPEC-001 está concluída quando:
+- os endpoints e contratos acima estiverem implementados;
+- os critérios de aceitação estiverem cobertos por testes;
+- a sessão e o rate limiting seguirem as decisões consolidadas;
+- não houver dependência funcional da SPEC-002+ para autenticar um usuário.

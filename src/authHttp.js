@@ -1,17 +1,36 @@
 const crypto = require('crypto');
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const { SESSION_TTL_MS, createUser, verifyPassword } = require('./authService');
 
 const SESSION_COOKIE_NAME = 'setflow_session';
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS = 20;
+const SESSION_CHECK_MAX_ATTEMPTS = 30;
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
 function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (typeof email !== 'string') {
+    return false;
+  }
+
+  const normalized = email.trim();
+  if (!normalized || normalized.includes(' ')) {
+    return false;
+  }
+
+  const atIndex = normalized.indexOf('@');
+  if (atIndex <= 0 || atIndex !== normalized.lastIndexOf('@') || atIndex === normalized.length - 1) {
+    return false;
+  }
+
+  const domain = normalized.slice(atIndex + 1);
+  const dotIndex = domain.indexOf('.');
+  return dotIndex > 0 && dotIndex < domain.length - 1;
 }
 
 function validatePassword(password) {
@@ -87,6 +106,7 @@ function createAuthApp(options = {}) {
   const usersById = options.usersById || new Map();
   const sessionsById = options.sessionsById || new Map();
   const failedLogins = options.failedLogins || new Map();
+  const failedSessionChecks = options.failedSessionChecks || new Map();
 
   const now = options.now || (() => Date.now());
   const isProduction = options.isProduction !== undefined
@@ -99,6 +119,16 @@ function createAuthApp(options = {}) {
   let nextUserId = options.initialUserId || 1;
   const app = express();
   const sessionCookieOptions = resolveSessionCookieOptions(isProduction);
+  const loginIpRateLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    limit: RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS,
+    standardHeaders: false,
+    legacyHeaders: false,
+    keyGenerator: (request) => getClientIp(request),
+    handler: (request, response) => {
+      sendError(response, 429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
+    }
+  });
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '16kb' }));
@@ -107,37 +137,37 @@ function createAuthApp(options = {}) {
     return `${getClientIp(request)}|${email}`;
   }
 
-  function isRateLimited(key) {
-    const attempt = failedLogins.get(key);
+  function isRateLimited(store, key, maxAttempts) {
+    const attempt = store.get(key);
     if (!attempt) {
       return false;
     }
 
     if (now() - attempt.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
-      failedLogins.delete(key);
+      store.delete(key);
       return false;
     }
 
-    return attempt.count >= RATE_LIMIT_MAX_ATTEMPTS;
+    return attempt.count >= maxAttempts;
   }
 
-  function registerFailedAttempt(key) {
+  function registerFailedAttempt(store, key) {
     const timestamp = now();
-    const current = failedLogins.get(key);
+    const current = store.get(key);
 
     if (!current || timestamp - current.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
-      failedLogins.set(key, { count: 1, windowStartedAt: timestamp });
+      store.set(key, { count: 1, windowStartedAt: timestamp });
       return;
     }
 
-    failedLogins.set(key, {
+    store.set(key, {
       count: current.count + 1,
       windowStartedAt: current.windowStartedAt
     });
   }
 
-  function clearFailedAttempts(key) {
-    failedLogins.delete(key);
+  function clearFailedAttempts(store, key) {
+    store.delete(key);
   }
 
   function invalidateUserSessions(userId) {
@@ -262,26 +292,26 @@ function createAuthApp(options = {}) {
     }
   });
 
-  app.post('/api/auth/login', (request, response, next) => {
+  app.post('/api/auth/login', loginIpRateLimiter, (request, response, next) => {
     try {
       const { email, password } = assertLoginPayload(request.body);
       const rateLimitKey = getRateLimitKey(request, email);
 
-      if (isRateLimited(rateLimitKey)) {
+      if (isRateLimited(failedLogins, rateLimitKey, RATE_LIMIT_MAX_ATTEMPTS)) {
         throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
       }
 
       const user = usersByEmail.get(email);
       if (!user || !verifyPassword(password, user.passwordSalt, user.passwordHash)) {
-        registerFailedAttempt(rateLimitKey);
+        registerFailedAttempt(failedLogins, rateLimitKey);
         throw createError(401, 'INVALID_CREDENTIALS', 'Credenciais inválidas.');
       }
 
       if (user.status !== 'active') {
         throw createError(403, 'ACCOUNT_INACTIVE', 'Conta inativa ou bloqueada.');
       }
-
-      clearFailedAttempts(rateLimitKey);
+      clearFailedAttempts(failedLogins, rateLimitKey);
+      clearFailedAttempts(failedLogins, rateLimitKey);
       const session = createSession(user.id);
       response.cookie(cookieName, session.id, sessionCookieOptions);
 
@@ -311,13 +341,24 @@ function createAuthApp(options = {}) {
   });
 
   app.get('/api/auth/me', (request, response, next) => {
+    const sessionCheckKey = `me:${getClientIp(request)}`;
+
     try {
+      if (isRateLimited(failedSessionChecks, sessionCheckKey, SESSION_CHECK_MAX_ATTEMPTS)) {
+        throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
+      }
+
       const { user } = readSessionFromRequest(request);
+      clearFailedAttempts(failedSessionChecks, sessionCheckKey);
       response.status(200).json({ user: toPublicUser(user) });
     } catch (error) {
       const clearOnAuthError = error.code === 'AUTHENTICATION_REQUIRED'
         || error.code === 'SESSION_EXPIRED'
         || error.code === 'ACCOUNT_INACTIVE';
+
+      if (clearOnAuthError) {
+        registerFailedAttempt(failedSessionChecks, sessionCheckKey);
+      }
 
       if (clearOnAuthError) {
         response.clearCookie(cookieName, {
@@ -358,7 +399,9 @@ function createAuthApp(options = {}) {
 module.exports = {
   SESSION_COOKIE_NAME,
   RATE_LIMIT_MAX_ATTEMPTS,
+  RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS,
   RATE_LIMIT_WINDOW_MS,
+  SESSION_CHECK_MAX_ATTEMPTS,
   createAuthApp,
   normalizeEmail,
   isValidEmail,

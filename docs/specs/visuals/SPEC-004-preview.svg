@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600">
+  <style>.h{font:22px sans-serif;fill:#fff}.t{font:16px sans-serif;fill:#111}.box{fill:#fff7ed;stroke:#fdba74}</style>
+  <rect width="1200" height="1600" fill="#fff"/>
+  <rect x="40" y="30" width="1120" height="80" fill="#92400e"/>
+  <text x="60" y="80" class="h">SPEC-004 — Criação de Setlist em Estado Rascunho</text>
+  <rect x="60" y="120" width="1080" height="140" class="box"/>
+  <text x="80" y="150" class="t">Objetivo: Criar setlists em estado Rascunho, editar ordem e metadados.</text>
+  <rect x="60" y="280" width="520" height="220" class="box"/>
+  <text x="80" y="310" class="t">RF ex: criar rascunho, adicionar músicas, salvar sem confirmar.</text>
+  <rect x="620" y="280" width="520" height="220" class="box"/>
+  <text x="640" y="310" class="t">RNF: versionamento básico (opcional).</text>
+  <rect x="60" y="520" width="1080" height="320" class="box"/>
+  <text x="80" y="560" class="t">Fluxos: criar rascunho -> editar -> salvar. Rascunho não aparece em confirmados.</text>
+</svg>

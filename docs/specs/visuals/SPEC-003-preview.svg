@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600">
+  <style>.h{font:22px sans-serif;fill:#fff}.t{font:16px sans-serif;fill:#111}.box{fill:#f8fafc;stroke:#e2e8f0}</style>
+  <rect width="1200" height="1600" fill="#fff"/>
+  <rect x="40" y="30" width="1120" height="80" fill="#065f46"/>
+  <text x="60" y="80" class="h">SPEC-003 — Gestão de Repertório e Configuração Musical</text>
+  <rect x="60" y="120" width="1080" height="140" class="box"/>
+  <text x="80" y="150" class="t">Objetivo: Cadastrar músicas e configurar parâmetros musicais.</text>
+  <rect x="60" y="280" width="520" height="220" class="box"/>
+  <text x="80" y="310" class="t">RF ex:</text>
+  <text x="100" y="340" class="t">- Cadastrar músicas</text>
+  <text x="100" y="370" class="t">- Associar músicas à banda</text>
+  <rect x="620" y="280" width="520" height="220" class="box"/>
+  <text x="640" y="310" class="t">RNF/RB:</text>
+  <text x="660" y="340" class="t">- Indexação para busca</text>
+  <text x="660" y="370" class="t">- Apenas membros com permissão</text>
+  <rect x="60" y="520" width="1080" height="320" class="box"/>
+  <text x="80" y="560" class="t">Fluxos:</text>
+  <text x="100" y="590" class="t">- Adicionar música / Importação em lote</text>
+  <text x="100" y="620" class="t">- Configurar limiares aplicáveis à sugestão</text>
+  <rect x="60" y="860" width="1080" height="180" class="box"/>
+  <text x="80" y="900" class="t">OPEN-031: Formato de duração? OPEN-032: Normalização via serviços externos?</text>
+</svg>

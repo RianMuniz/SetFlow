@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600">
+  <style>.h{font:22px sans-serif;fill:#fff}.t{font:16px sans-serif;fill:#111}.box{fill:#f0fdf4;stroke:#bbf7d0}</style>
+  <rect width="1200" height="1600" fill="#fff"/>
+  <rect x="40" y="30" width="1120" height="80" fill="#166534"/>
+  <text x="60" y="80" class="h">SPEC-005 — Sugestão Automática de Ordem, Duração e Alertas</text>
+  <rect x="60" y="120" width="1080" height="140" class="box"/>
+  <text x="80" y="150" class="t">Objetivo: Gerar ordem sugerida, estimar duração e sinalizar transições problemáticas.</text>
+  <rect x="60" y="280" width="520" height="220" class="box"/>
+  <text x="80" y="310" class="t">RF ex: gerar sugestão, calcular duração, marcar alertas.</text>
+  <rect x="620" y="280" width="520" height="220" class="box"/>
+  <text x="640" y="310" class="t">RNF: performance do algoritmo.</text>
+  <rect x="60" y="520" width="1080" height="320" class="box"/>
+  <text x="80" y="560" class="t">Fluxo: solicitar sugestão -> sistema retorna proposta com indicadores e métricas.</text>
+</svg>

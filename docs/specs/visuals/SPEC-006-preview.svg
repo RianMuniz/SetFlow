@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600">
+  <style>.h{font:22px sans-serif;fill:#fff}.t{font:16px sans-serif;fill:#111}.box{fill:#eef2ff;stroke:#c7d2fe}</style>
+  <rect width="1200" height="1600" fill="#fff"/>
+  <rect x="40" y="30" width="1120" height="80" fill="#3730a3"/>
+  <text x="60" y="80" class="h">SPEC-006 — Reordenação Manual e Confirmação do Setlist</text>
+  <rect x="60" y="120" width="1080" height="140" class="box"/>
+  <text x="80" y="150" class="t">Objetivo: Revisão pelo líder, edição manual e confirmação do setlist.</text>
+  <rect x="60" y="280" width="520" height="220" class="box"/>
+  <text x="80" y="310" class="t">RF ex: drag-and-drop, confirmar, notificar membros.</text>
+  <rect x="620" y="280" width="520" height="220" class="box"/>
+  <text x="640" y="310" class="t">RB: somente líder pode confirmar, delegação pendente.</text>
+  <rect x="60" y="520" width="1080" height="320" class="box"/>
+  <text x="80" y="560" class="t">Fluxo: revisar -> reordenar -> confirmar -> notificar.</text>
+</svg>

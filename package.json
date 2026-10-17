@@ -1,12 +1,28 @@
 {
   "name": "setflow",
-  "version": "1.0.0",
-  "description": "Sistema de gestão e otimização de setlists para bandas",
-  "main": "src/setlistService.js",
+  "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "test": "node src/tests/authService.test.js && node src/tests/setlistService.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/setlistDraftService.test.js"
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "migrate": "node ./dist/migrations/run-migrations.js || echo \"run migrations manually\"",
+    "test": "jest --runInBand"
   },
-  "keywords": [],
-  "author": "Rian Muniz",
-  "license": "ISC"
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.10.0",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.15",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.4.2",
+    "jest": "^29.6.0",
+    "supertest": "^6.4.0",
+    "ts-jest": "^29.1.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6"
+  }
 }

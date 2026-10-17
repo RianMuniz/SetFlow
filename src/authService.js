@@ -7,7 +7,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash };
 }
 
-function createUser({ id, email, password, status = 'active' }) {
+function createUser({ id, nickname = null, email, password, status = 'active' }) {
   if (!id || !email || !password) {
     throw new Error('Dados do usuário incompletos.');
   }
@@ -17,6 +17,7 @@ function createUser({ id, email, password, status = 'active' }) {
 
   return {
     id,
+    nickname: nickname === null ? null : String(nickname).trim(),
     email: normalizedEmail,
     passwordHash: hash,
     passwordSalt: salt,

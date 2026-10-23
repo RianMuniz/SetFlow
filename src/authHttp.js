@@ -2,6 +2,12 @@ const crypto = require('crypto');
 const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { SESSION_TTL_MS, createUser, verifyPassword } = require('./authService');
+const { createError, sendError } = require('./httpErrors');
+const { normalizeNickname, validateNickname } = require('./nickname');
+const { DuplicateError } = require('./repositories/errors');
+const { createMemoryRepositories } = require('./repositories/memoryRepositories');
+const { createPgRepositories } = require('./repositories/pgRepositories');
+const { createBandRouter } = require('./bandApi');
 
 const SESSION_COOKIE_NAME = 'setflow_session';
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -48,6 +54,7 @@ function validatePassword(password) {
 function toPublicUser(user) {
   return {
     id: user.id,
+    nickname: user.nickname === undefined ? null : user.nickname,
     email: user.email,
     status: user.status
   };
@@ -75,22 +82,6 @@ function parseCookies(cookieHeader) {
     }, {});
 }
 
-function createError(status, code, message) {
-  const error = new Error(message);
-  error.status = status;
-  error.code = code;
-  return error;
-}
-
-function sendError(response, status, code, message) {
-  response.status(status).json({
-    error: {
-      code,
-      message
-    }
-  });
-}
-
 function resolveSessionCookieOptions(isProduction) {
   return {
     httpOnly: true,
@@ -101,9 +92,26 @@ function resolveSessionCookieOptions(isProduction) {
   };
 }
 
+// Persistência: `options.pool` (PostgreSQL, usado em produção), `options.repositories`
+// (repositórios já montados) ou, sem ambos, repositórios em memória (testes unitários;
+// aceitam `usersByEmail`/`usersById` pré-populados como na SPEC-001).
+function resolveRepositories(options) {
+  if (options.repositories) {
+    return options.repositories;
+  }
+
+  if (options.pool) {
+    return createPgRepositories(options.pool, { logger: options.logger });
+  }
+
+  return createMemoryRepositories({
+    usersByEmail: options.usersByEmail,
+    usersById: options.usersById
+  });
+}
+
 function createAuthApp(options = {}) {
-  const usersByEmail = options.usersByEmail || new Map();
-  const usersById = options.usersById || new Map();
+  const { userRepository, bandRepository } = resolveRepositories(options);
   const sessionsById = options.sessionsById || new Map();
   const failedLogins = options.failedLogins || new Map();
   const failedSessionChecks = options.failedSessionChecks || new Map();
@@ -116,7 +124,7 @@ function createAuthApp(options = {}) {
   const cookieName = options.sessionCookieName || SESSION_COOKIE_NAME;
   const getClientIp = options.getClientIp || ((request) => request.ip || request.socket.remoteAddress || 'unknown');
 
-  let nextUserId = options.initialUserId || 1;
+  const newId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
   const app = express();
   const sessionCookieOptions = resolveSessionCookieOptions(isProduction);
   const loginIpRateLimiter = rateLimit({
@@ -186,6 +194,7 @@ function createAuthApp(options = {}) {
     const session = {
       id: sessionId,
       userId,
+      activeBandId: null,
       createdAt: new Date(timestamp).toISOString(),
       expiresAt: new Date(timestamp + SESSION_TTL_MS).toISOString()
     };
@@ -194,7 +203,7 @@ function createAuthApp(options = {}) {
     return session;
   }
 
-  function readSessionFromRequest(request) {
+  async function readSessionFromRequest(request) {
     const cookies = parseCookies(request.headers.cookie);
     const sessionId = cookies[cookieName];
 
@@ -214,7 +223,7 @@ function createAuthApp(options = {}) {
       throw createError(401, 'SESSION_EXPIRED', 'Sessão expirada.');
     }
 
-    const user = usersById.get(session.userId);
+    const user = await userRepository.findById(session.userId);
     if (!user) {
       sessionsById.delete(sessionId);
       throw createError(401, 'AUTHENTICATION_REQUIRED', 'Autenticação necessária.');
@@ -225,12 +234,41 @@ function createAuthApp(options = {}) {
       throw createError(403, 'ACCOUNT_INACTIVE', 'Conta inativa ou bloqueada.');
     }
 
-    return { sessionId, user };
+    return { sessionId, session, user };
+  }
+
+  function clearSessionCookie(response) {
+    response.clearCookie(cookieName, {
+      httpOnly: sessionCookieOptions.httpOnly,
+      sameSite: sessionCookieOptions.sameSite,
+      secure: sessionCookieOptions.secure,
+      path: sessionCookieOptions.path
+    });
+  }
+
+  const AUTH_FAILURE_CODES = ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED', 'ACCOUNT_INACTIVE'];
+
+  // Middleware das rotas protegidas: popula request.auth = { sessionId, session, user }.
+  async function requireAuthentication(request, response, next) {
+    try {
+      request.auth = await readSessionFromRequest(request);
+      next();
+    } catch (error) {
+      if (AUTH_FAILURE_CODES.includes(error.code)) {
+        clearSessionCookie(response);
+      }
+      next(error);
+    }
   }
 
   function assertRegisterPayload(body) {
     if (!body || typeof body !== 'object') {
       throw createError(400, 'VALIDATION_ERROR', 'Payload JSON obrigatório.');
+    }
+
+    const nicknameError = validateNickname(body.nickname);
+    if (nicknameError) {
+      throw createError(400, 'VALIDATION_ERROR', nicknameError);
     }
 
     const email = normalizeEmail(body.email);
@@ -245,7 +283,7 @@ function createAuthApp(options = {}) {
       throw createError(400, 'VALIDATION_ERROR', passwordError);
     }
 
-    return { email, password };
+    return { nickname: body.nickname.trim(), email, password };
   }
 
   function assertLoginPayload(body) {
@@ -263,23 +301,41 @@ function createAuthApp(options = {}) {
     return { email, password };
   }
 
-  app.post('/api/auth/register', (request, response, next) => {
-    try {
-      const { email, password } = assertRegisterPayload(request.body);
+  function duplicateUserError(field) {
+    return field === 'nickname'
+      ? createError(409, 'NICKNAME_ALREADY_EXISTS', 'Nickname já está em uso.')
+      : createError(409, 'EMAIL_ALREADY_EXISTS', 'E-mail já cadastrado.');
+  }
 
-      if (usersByEmail.has(email)) {
-        throw createError(409, 'EMAIL_ALREADY_EXISTS', 'E-mail já cadastrado.');
+  app.post('/api/auth/register', async (request, response, next) => {
+    try {
+      const { nickname, email, password } = assertRegisterPayload(request.body);
+
+      if (await userRepository.findByEmail(email)) {
+        throw duplicateUserError('email');
+      }
+
+      if (await userRepository.findByNickname(normalizeNickname(nickname))) {
+        throw duplicateUserError('nickname');
       }
 
       const user = createUser({
-        id: `u-${nextUserId++}`,
+        id: newId('u'),
+        nickname,
         email,
         password,
         status: 'active'
       });
 
-      usersByEmail.set(user.email, user);
-      usersById.set(user.id, user);
+      try {
+        await userRepository.create(user);
+      } catch (error) {
+        // Corrida entre cadastros simultâneos: a constraint UNIQUE do banco decide.
+        if (error instanceof DuplicateError) {
+          throw duplicateUserError(error.field);
+        }
+        throw error;
+      }
 
       const session = createSession(user.id);
       response.cookie(cookieName, session.id, sessionCookieOptions);
@@ -292,7 +348,7 @@ function createAuthApp(options = {}) {
     }
   });
 
-  app.post('/api/auth/login', loginIpRateLimiter, (request, response, next) => {
+  app.post('/api/auth/login', loginIpRateLimiter, async (request, response, next) => {
     try {
       const { email, password } = assertLoginPayload(request.body);
       const rateLimitKey = getRateLimitKey(request, email);
@@ -301,7 +357,7 @@ function createAuthApp(options = {}) {
         throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
       }
 
-      const user = usersByEmail.get(email);
+      const user = await userRepository.findByEmail(email);
       if (!user || !verifyPassword(password, user.passwordSalt, user.passwordHash)) {
         registerFailedAttempt(failedLogins, rateLimitKey);
         throw createError(401, 'INVALID_CREDENTIALS', 'Credenciais inválidas.');
@@ -310,7 +366,6 @@ function createAuthApp(options = {}) {
       if (user.status !== 'active') {
         throw createError(403, 'ACCOUNT_INACTIVE', 'Conta inativa ou bloqueada.');
       }
-      clearFailedAttempts(failedLogins, rateLimitKey);
       clearFailedAttempts(failedLogins, rateLimitKey);
       const session = createSession(user.id);
       response.cookie(cookieName, session.id, sessionCookieOptions);
@@ -331,16 +386,11 @@ function createAuthApp(options = {}) {
       sessionsById.delete(sessionId);
     }
 
-    response.clearCookie(cookieName, {
-      httpOnly: sessionCookieOptions.httpOnly,
-      sameSite: sessionCookieOptions.sameSite,
-      secure: sessionCookieOptions.secure,
-      path: sessionCookieOptions.path
-    });
+    clearSessionCookie(response);
     response.status(200).json({ success: true });
   });
 
-  app.get('/api/auth/me', (request, response, next) => {
+  app.get('/api/auth/me', async (request, response, next) => {
     const sessionCheckKey = `me:${getClientIp(request)}`;
 
     try {
@@ -348,7 +398,7 @@ function createAuthApp(options = {}) {
         throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
       }
 
-      const { user } = readSessionFromRequest(request);
+      const { user } = await readSessionFromRequest(request);
       clearFailedAttempts(failedSessionChecks, sessionCheckKey);
       response.status(200).json({ user: toPublicUser(user) });
     } catch (error) {
@@ -358,20 +408,20 @@ function createAuthApp(options = {}) {
 
       if (clearOnAuthError) {
         registerFailedAttempt(failedSessionChecks, sessionCheckKey);
-      }
-
-      if (clearOnAuthError) {
-        response.clearCookie(cookieName, {
-          httpOnly: sessionCookieOptions.httpOnly,
-          sameSite: sessionCookieOptions.sameSite,
-          secure: sessionCookieOptions.secure,
-          path: sessionCookieOptions.path
-        });
+        clearSessionCookie(response);
       }
 
       next(error);
     }
   });
+
+  // SPEC-002: bandas, membros e contexto ativo (todas as rotas exigem autenticação).
+  app.use('/api/bandas', createBandRouter({
+    bandRepository,
+    userRepository,
+    requireAuthentication,
+    newId
+  }));
 
   app.use((error, request, response, next) => {
     if (response.headersSent) {

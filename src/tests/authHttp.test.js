@@ -105,11 +105,12 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: '  Maria@Teste.com ', password: 'senha1234' }
+      body: { nickname: 'Maria', email: '  Maria@Teste.com ', password: 'senha1234' }
     });
 
     assert.strictEqual(registerResponse.status, 201);
     assert.strictEqual(registerResponse.json.user.email, 'maria@teste.com');
+    assert.strictEqual(registerResponse.json.user.nickname, 'Maria');
     assert.ok(!('passwordHash' in registerResponse.json.user), 'Resposta não deve expor hash.');
     assert.ok(!('passwordSalt' in registerResponse.json.user), 'Resposta não deve expor salt.');
 
@@ -131,6 +132,7 @@ async function run() {
 
     assert.strictEqual(meResponse.status, 200);
     assert.strictEqual(meResponse.json.user.email, 'maria@teste.com');
+    assert.strictEqual(meResponse.json.user.nickname, 'Maria', '/me deve incluir o nickname.');
     console.log('✅ Cadastro público cria usuário ativo, sessão e representação pública segura.');
   });
 
@@ -139,7 +141,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'invalido', password: 'senha1234' }
+      body: { nickname: 'invalido', email: 'invalido', password: 'senha1234' }
     });
     assert.strictEqual(invalidEmail.status, 400);
     assert.strictEqual(invalidEmail.json.error.code, 'VALIDATION_ERROR');
@@ -148,7 +150,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'joao@teste.com', password: '123' }
+      body: { nickname: 'joao', email: 'joao@teste.com', password: '123' }
     });
     assert.strictEqual(invalidPassword.status, 400);
     assert.strictEqual(invalidPassword.json.error.code, 'VALIDATION_ERROR');
@@ -167,11 +169,42 @@ async function run() {
   });
 
   await withServer({ isProduction: false }, async ({ port }) => {
+    const register = (body) => request({ port, method: 'POST', path: '/api/auth/register', body });
+
+    const missing = await register({ email: 'sem-nick@teste.com', password: 'senha1234' });
+    assert.strictEqual(missing.status, 400);
+    assert.strictEqual(missing.json.error.code, 'VALIDATION_ERROR');
+
+    for (const invalid of ['ab', 'a'.repeat(21), 'nick name', 'nick@name', '   ', 123]) {
+      const response = await register({ nickname: invalid, email: 'invalido-nick@teste.com', password: 'senha1234' });
+      assert.strictEqual(response.status, 400, `Nickname ${JSON.stringify(invalid)} deve ser rejeitado.`);
+      assert.strictEqual(response.json.error.code, 'VALIDATION_ERROR');
+    }
+
+    const first = await register({ nickname: 'Guitarrista', email: 'g1@teste.com', password: 'senha1234' });
+    assert.strictEqual(first.status, 201);
+
+    const duplicate = await register({ nickname: '  guitarrista ', email: 'g2@teste.com', password: 'senha1234' });
+    assert.strictEqual(duplicate.status, 409);
+    assert.strictEqual(duplicate.json.error.code, 'NICKNAME_ALREADY_EXISTS');
+
+    const login = await request({
+      port,
+      method: 'POST',
+      path: '/api/auth/login',
+      body: { email: 'g1@teste.com', password: 'senha1234' }
+    });
+    assert.strictEqual(login.status, 200, 'Login continua usando e-mail + senha.');
+    assert.strictEqual(login.json.user.nickname, 'Guitarrista');
+    console.log('✅ Nickname obrigatório, validado e único sem diferenciar maiúsculas/minúsculas.');
+  });
+
+  await withServer({ isProduction: false }, async ({ port }) => {
     const firstRegister = await request({
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'ana@teste.com', password: 'senha1234' }
+      body: { nickname: 'ana', email: 'ana@teste.com', password: 'senha1234' }
     });
     assert.strictEqual(firstRegister.status, 201);
 
@@ -179,7 +212,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'ana@teste.com', password: 'senha1234' }
+      body: { nickname: 'ana', email: 'ana@teste.com', password: 'senha1234' }
     });
     assert.strictEqual(duplicateRegister.status, 409);
     assert.strictEqual(duplicateRegister.json.error.code, 'EMAIL_ALREADY_EXISTS');
@@ -191,7 +224,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'carlos@teste.com', password: 'senha1234' }
+      body: { nickname: 'carlos', email: 'carlos@teste.com', password: 'senha1234' }
     });
 
     const wrongPassword = await request({
@@ -254,7 +287,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'logout@teste.com', password: 'senha1234' }
+      body: { nickname: 'logout', email: 'logout@teste.com', password: 'senha1234' }
     });
     const sessionCookie = extractCookieValue(registerResponse.headers['set-cookie'], 'setflow_session');
 
@@ -336,7 +369,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'rate@teste.com', password: 'senha1234' }
+      body: { nickname: 'rate', email: 'rate@teste.com', password: 'senha1234' }
     });
 
     for (let attempt = 1; attempt <= RATE_LIMIT_MAX_ATTEMPTS; attempt += 1) {
@@ -365,7 +398,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'limpeza@teste.com', password: 'senha1234' }
+      body: { nickname: 'limpeza', email: 'limpeza@teste.com', password: 'senha1234' }
     });
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -403,7 +436,7 @@ async function run() {
       port,
       method: 'POST',
       path: '/api/auth/register',
-      body: { email: 'sessao@teste.com', password: 'senha1234' }
+      body: { nickname: 'sessao', email: 'sessao@teste.com', password: 'senha1234' }
     });
 
     const firstLogin = await request({

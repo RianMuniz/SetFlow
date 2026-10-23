@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { normalizeNickname } = require('./nickname');
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -7,7 +8,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash };
 }
 
-function createUser({ id, email, password, status = 'active' }) {
+function createUser({ id, email, password, status = 'active', nickname }) {
   if (!id || !email || !password) {
     throw new Error('Dados do usuário incompletos.');
   }
@@ -15,13 +16,22 @@ function createUser({ id, email, password, status = 'active' }) {
   const normalizedEmail = String(email).trim().toLowerCase();
   const { salt, hash } = hashPassword(password);
 
-  return {
+  const user = {
     id,
     email: normalizedEmail,
     passwordHash: hash,
     passwordSalt: salt,
     status
   };
+
+  // nickname é opcional neste serviço para preservar compatibilidade com a SPEC-001
+  // original; a obrigatoriedade é validada no cadastro público (authHttp).
+  if (nickname !== undefined && nickname !== null) {
+    user.nickname = String(nickname).trim();
+    user.nicknameNormalized = normalizeNickname(nickname);
+  }
+
+  return user;
 }
 
 function verifyPassword(password, salt, expectedHash) {

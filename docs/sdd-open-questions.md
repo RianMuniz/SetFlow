@@ -10,7 +10,7 @@ Todas as decisões relevantes da baseline foram aprovadas e registradas conforme
 - **OPEN-04:** limiar de transição = 5 semitons, configurável por banda.
 - **OPEN-05:** um setlist deve conter pelo menos 1 música.
 - **OPEN-06:** apenas o líder pode criar setlists.
-- **OPEN-07:** o líder visualiza apenas o seu próprio domínio.
+- **OPEN-07:** o líder visualiza apenas o seu próprio domínio musical.
 - **OPEN-08:** algoritmo de ordenação com backtracking limitado.
 - **OPEN-09:** tons representados em cifragem com sustenidos (#).
 - **OPEN-10:** duração persistida em segundos e exibida em minutos/segundos.

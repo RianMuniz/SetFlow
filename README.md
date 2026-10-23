@@ -1,89 +1,117 @@
 🎸 SetFlow — Gerenciador Inteligente de Repertório e Setlist
 
-👥 Desenvolvido por: 
+👥 Desenvolvido por:
 
 Matheus Junetti Sevciuc Machado - 10408848
 
 Rian Silva Muniz - 10747955
 
-## Executar localmente (MVP atual)
+## Requisitos
+
+Node.js 18+ e PostgreSQL 13+.
+
+## Instalação e configuração
 
 ```bash
 npm install
-npm start
+cp .env.example .env        # ajuste DATABASE_URL; nunca versione o .env
+createdb setflow            # ou crie o banco pela sua ferramenta
+export DATABASE_URL=postgres://usuario:senha@localhost:5432/setflow
+# alternativa (Node 20.6+): node --env-file=.env src/migrate.js
+npm run db:migrate          # aplica db/migrations/*.sql
+npm start                   # sobe a API (PORT, padrão 3000)
 ```
 
-Servidor de autenticação (SPEC-001) disponível em:
+Sem `DATABASE_URL`, `npm start` e `npm run db:migrate` falham com mensagem clara. Se o schema não foi migrado, o servidor orienta a rodar `npm run db:migrate`.
+
+## Testes
+
+```bash
+npm test            # sem banco: unitários, pool falso e suíte HTTP com repositórios em memória
+npm run test:pg     # exige DATABASE_URL; usa um schema temporário (setflow_test_*) e o remove no final
+```
+
+`npm run test:pg` falha (exit 1) com mensagem explicativa quando o PostgreSQL não está configurado ou acessível.
+
+## Endpoints
+
+Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickname, login, bandas, membros e contexto ativo).
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `POST /api/bandas`
+- `GET /api/bandas`
+- `GET /api/bandas/:bandId`
+- `POST /api/bandas/:bandId/membros`
+- `POST /api/bandas/:bandId/ativa`
 
-Para rodar os testes:
+## Executar localmente
+
+O servidor é iniciado com:
 
 ```bash
-npm test
+npm start
 ```
+
+A API usa JavaScript/CommonJS com Express. Usuários, bandas e membros são persistidos em PostgreSQL; as sessões permanecem em memória no servidor.
 
 📌 Visão Geral
 
-O SetFlow é um sistema web para músicos e bandas organizarem seu repertório e montarem setlists de ensaio ou apresentação em segundos. Além de cadastrar músicas com tom, BPM, duração, observações de timbre/patch e cifras anexadas, o sistema sugere a melhor ordem de execução das músicas escolhidas, evitando transições de tom abruptas e avisando quando a duração total do set ultrapassa o tempo disponível.
-
+O SetFlow é um sistema web para músicos e bandas organizarem seu repertório e montarem setlists de ensaio ou apresentação em segundos. Além de cadastrar músicas com tom, BPM, duração, observações e cifra, o sistema ajuda a organizar a ordem das músicas e acompanhar a preparação dos músicos.
 
 👥 Perfis de Usuário
-Líder/Regente: cadastra as músicas do repertório (tom, BPM, duração, observações, cifra), cria setlists para ensaios/apresentações, ajusta a ordem sugerida pelo sistema e confirma o setlist final.
-Músico da banda: visualiza os setlists confirmados, acessa a cifra e as observações de cada música, e marca seu nível de domínio (sei bem / preciso revisar / não sei) em cada uma.
+
+**Líder/Regente:** cadastra as músicas do repertório, cria setlists para ensaios/apresentações, ajusta a ordem sugerida pelo sistema e confirma o setlist.
+
+**Músico da banda:** visualiza os setlists confirmados, acessa a cifra e as observações de cada música e marca seu nível de domínio em cada uma.
+
 🎯 O Motor Central: Ordenação Inteligente de Setlist
 
 Ao montar um setlist, o sistema analisa a lista de músicas escolhidas e sugere uma ordem que minimize transições bruscas de tom entre músicas consecutivas.
 
-Cálculo de distância entre tons
+As 12 notas musicais formam um ciclo cromático. A distância entre dois tons é o menor número de semitons entre eles, percorrendo o ciclo em qualquer direção:
 
-As 12 notas musicais formam um ciclo (círculo cromático). A distância entre dois tons é o menor número de semitons entre eles, percorrendo o ciclo em qualquer direção (ex.: de C para C# é 1 semitom; de C para F# é a distância máxima possível, 6 semitons).
+`distância(tomA, tomB) = min(|posição(tomA) − posição(tomB)|, 12 − |posição(tomA) − posição(tomB)|)`
 
-distância(tomA, tomB) = min(|posição(tomA) − posição(tomB)|, 12 − |posição(tomA) − posição(tomB)|)
-Regra de transição abrupta
-
-Se a distância entre os tons de duas músicas consecutivas no setlist for maior que um limiar definido (ex.: 5 semitons — a calibrar pela equipe), o sistema sinaliza essa transição como abrupta, permitindo ao líder reordenar antes de confirmar.
-
-Verificação de duração
-
-O sistema soma a duração de todas as músicas do setlist e compara com o tempo total disponível informado pelo líder (ex.: duração do ensaio ou do show), avisando caso o setlist ultrapasse esse tempo.
+Uma transição é considerada abrupta quando a distância excede o limiar definido para a banda, cujo valor padrão é 5 semitons. O sistema também soma a duração das músicas e sinaliza quando o tempo total ultrapassa o tempo disponível informado pelo líder.
 
 🔄 Estados do Setlist
 
 Cada setlist criado segue este fluxo:
 
-Rascunho → Confirmado → Tocado
-Rascunho: o líder ainda está montando/reordenando as músicas.
-Confirmado: a ordem está fechada; músicos da banda podem visualizar.
-Tocado: o setlist foi usado em um ensaio/apresentação (permite histórico).
+`Rascunho → Confirmado → Tocado`
+
+- **Rascunho:** o líder ainda está montando ou reordenando as músicas.
+- **Confirmado:** a ordem está fechada; músicos da banda podem visualizar.
+- **Tocado:** o setlist foi usado em um ensaio ou apresentação e passa a compor o histórico.
+
 🎼 Domínio da Música por Músico
 
 Cada músico da banda pode marcar, por música, seu nível de domínio:
 
-Não Sei → Preciso Revisar → Sei Bem
+`Não Sei → Preciso Revisar → Sei Bem`
 
-Isso não afeta a ordem do setlist — é uma informação pessoal de cada músico, visível apenas a ele e ao líder, para ajudar na preparação antes do ensaio.
+Isso não afeta a ordem do setlist. É uma informação pessoal de cada músico, visível apenas a ele e ao líder, para ajudar na preparação antes do ensaio.
 
-Regras de Negócio Principais
-RB-01 — Distância entre tons: a distância entre dois tons é sempre o menor caminho no ciclo cromático de 12 semitons.
-RB-02 — Transição abrupta: uma transição entre músicas consecutivas é considerada abrupta se a distância de tom for maior que [definir limiar, ex.: 5 semitons].
-RB-03 — Duração do setlist: a duração total de um setlist é a soma das durações de todas as músicas que o compõem.
-RB-04 — Confirmação exclusiva do líder: apenas o perfil Líder/Regente pode reordenar músicas e confirmar um setlist.
-RB-05 — Transição de estado do setlist: um setlist só pode ser marcado como Tocado se já estiver Confirmado.
-RB-06 — Domínio individual: o nível de domínio de uma música é sempre pessoal por músico, nunca compartilhado como uma média da banda.
+## Regras de Negócio Principais
 
-Nota de escopo (MVP): o sistema não processa áudio nem arquivos de partitura — cifras e observações são texto/anexos simples. A sugestão de ordem é baseada apenas em tom e duração; critérios adicionais (energia, gênero, andamento/BPM) podem ser incorporados em versões futuras.
+- **RB-01:** a distância entre dois tons é sempre o menor caminho no ciclo cromático de 12 semitons.
+- **RB-02:** uma transição é abrupta se a distância de tom for maior que o limiar da banda.
+- **RB-03:** a duração total de um setlist é a soma das durações das músicas.
+- **RB-04:** apenas o líder pode reordenar músicas e confirmar um setlist.
+- **RB-05:** um setlist só pode ser marcado como Tocado se já estiver Confirmado.
+- **RB-06:** o nível de domínio é pessoal por músico.
 
-🛠️ Tecnologias e Arquitetura
-Documentação e specs: Spec-Driven Development (SDD) em formato EARS, organizada em /docs.
-Back-end: Node.js ou Python (definir stack com o grupo).
-Front-end: React ou HTML5 + CSS3 (definir com o grupo).
-Banco de dados: PostgreSQL ou SQLite, para persistir músicas, setlists e domínio por músico.
-Gestão do projeto: GitHub Issues, Pull Requests revisados e Project Board (Kanban).
+## Tecnologias e Arquitetura
 
-.specify/ — specs, planos e tasks de apoio ao agente de codificação.
+- Documentação e specs: Spec-Driven Development (SDD) em formato EARS, organizada em `/docs`.
+- Backend: JavaScript/CommonJS com Express.
+- Frontend: HTML5 + CSS3.
+- Banco de dados: PostgreSQL via `pg`, configurado por `DATABASE_URL`.
+- Migrações: SQL versionado em `db/migrations`.
+- Camada de dados: repositórios injetáveis, com memória nos testes e PostgreSQL em produção.
+- Gestão do projeto: GitHub Issues, Pull Requests revisados e Project Board (Kanban).
 
-Esta estrutura atende às exigências de documentação inicial da Semana 1 da disciplina: visão do produto, perfis de usuário, regras de negócio explícitas e link para a especificação completa em /docs.
+`.specify/` — specs, planos e tasks de apoio ao agente de codificação.

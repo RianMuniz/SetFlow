@@ -57,17 +57,6 @@ function mapSetlist(row, items = []) {
     return null;
   }
 
-  function mapSession(row) {
-    return {
-      id: row.id,
-      userId: row.user_id,
-      csrfToken: row.csrf_token,
-      activeBandId: row.active_band_id,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at
-    };
-  }
-
   return {
     id: row.id,
     bandaId: row.band_id,
@@ -76,6 +65,17 @@ function mapSetlist(row, items = []) {
     tempoDisponivelSegundos: Number(row.available_seconds),
     estado: row.state,
     musicas: items
+  };
+}
+
+function mapSession(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    csrfToken: row.csrf_token,
+    activeBandId: row.active_band_id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at
   };
 }
 

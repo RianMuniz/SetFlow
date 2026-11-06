@@ -82,12 +82,6 @@ async function main() {
       });
       assert.strictEqual(register.status, 201);
 
-      await withServer(createAuthApp({ pool, isProduction: false }), async ({ port: otherPort }) => {
-        const login = await request({ port: otherPort, method: 'POST', path: '/api/auth/login', body: { email, password: 'senha1234' } });
-        assert.strictEqual(login.status, 200, 'Usuário persistido deve autenticar em nova instância da API.');
-        assert.ok(extractCookieValue(login.headers['set-cookie'], 'setflow_session'));
-      });
-
       const persistentSession = extractCookieValue(register.headers['set-cookie'], 'setflow_session');
       await withServer(createAuthApp({ pool, isProduction: false }), async ({ port: otherPort }) => {
         const me = await request({
@@ -98,6 +92,21 @@ async function main() {
         });
         assert.strictEqual(me.status, 200, 'A sessão deve continuar válida em nova instância.');
         assert.strictEqual(me.json.user.email, email);
+      });
+
+      await withServer(createAuthApp({ pool, isProduction: false }), async ({ port: otherPort }) => {
+        const login = await request({ port: otherPort, method: 'POST', path: '/api/auth/login', body: { email, password: 'senha1234' } });
+        assert.strictEqual(login.status, 200, 'Usuário persistido deve autenticar em nova instância da API.');
+        const newSession = extractCookieValue(login.headers['set-cookie'], 'setflow_session');
+        assert.ok(newSession);
+
+        const oldSessionAccess = await request({
+          port: otherPort,
+          method: 'GET',
+          path: '/api/auth/me',
+          headers: { Cookie: persistentSession }
+        });
+        assert.strictEqual(oldSessionAccess.status, 401, 'Login deve invalidar a sessão anterior do mesmo usuário.');
       });
     });
     console.log('✅ [postgres] usuário persistido autentica em nova instância da aplicação.');

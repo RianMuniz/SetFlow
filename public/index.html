@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#172033">
+  <title>SetFlow</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="app" class="shell">
+    <section id="auth-view" class="auth-view">
+      <div class="brand"><span>♫</span><h1>SetFlow</h1></div>
+      <p class="muted">Seu repertório, ensaio e apresentação em um só lugar.</p>
+      <div class="segmented">
+        <button class="segment active" data-auth-mode="login">Entrar</button>
+        <button class="segment" data-auth-mode="register">Criar conta</button>
+      </div>
+      <form id="auth-form" class="card form-stack">
+        <label id="nickname-field" class="hidden">Nickname<input name="nickname" autocomplete="nickname"></label>
+        <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
+        <label>Senha<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit" id="auth-submit">Entrar</button>
+        <p id="auth-error" class="error"></p>
+      </form>
+    </section>
+
+    <section id="main-view" class="hidden">
+      <header class="topbar">
+        <div><span class="eyebrow">SETFLOW</span><h1 id="page-title">Início</h1></div>
+        <button id="logout-button" class="icon-button" aria-label="Sair">↪</button>
+      </header>
+      <div id="toast" class="toast hidden"></div>
+      <section id="content" class="content"></section>
+      <nav class="bottom-nav" aria-label="Navegação principal">
+        <button data-screen="home">⌂<span>Início</span></button>
+        <button data-screen="music">♫<span>Repertório</span></button>
+        <button data-screen="setlists">▤<span>Setlists</span></button>
+        <button data-screen="history">◷<span>Histórico</span></button>
+      </nav>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -22,7 +22,7 @@
 - Usuário inativo/bloqueado não autentica.
 - Usuário sem banda associada pode autenticar normalmente.
 - Usuários são persistidos em PostgreSQL, na tabela `users`, conforme o modelo da SPEC-002 §7. Os IDs têm o formato `u-<uuid>`.
-- As sessões continuam armazenadas em memória no servidor.
+- As sessões são persistidas em PostgreSQL, com expiração de 24 horas e token CSRF por sessão.
 
 ## 3. Escopo
 

@@ -46,6 +46,20 @@ Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickna
 - `GET /api/bandas/:bandId`
 - `POST /api/bandas/:bandId/membros`
 - `POST /api/bandas/:bandId/ativa`
+- `POST /api/bandas/:bandId/musicas`
+- `GET /api/bandas/:bandId/musicas`
+- `PUT /api/bandas/:bandId/musicas/:musicId`
+- `PUT /api/bandas/:bandId/limiar-transicao`
+- `POST /api/bandas/:bandId/setlists`
+- `POST /api/bandas/:bandId/setlists/:setlistId/sugestao`
+- `PUT /api/bandas/:bandId/setlists/:setlistId/ordem`
+- `POST /api/bandas/:bandId/setlists/:setlistId/confirmar`
+- `POST /api/bandas/:bandId/setlists/:setlistId/reabrir`
+- `POST /api/bandas/:bandId/setlists/:setlistId/tocar`
+- `GET /api/bandas/:bandId/historico`
+- `GET /api/bandas/:bandId/setlists-confirmados`
+- `GET /api/bandas/:bandId/setlists/:setlistId/visualizacao`
+- `PUT /api/bandas/:bandId/musicas/:musicId/dominio`
 
 ## Executar localmente
 
@@ -55,7 +69,16 @@ O servidor é iniciado com:
 npm start
 ```
 
-A API usa JavaScript/CommonJS com Express. Usuários, bandas e membros são persistidos em PostgreSQL; as sessões permanecem em memória no servidor.
+A API usa JavaScript/CommonJS com Express. Usuários, bandas, membros e sessões são persistidos em PostgreSQL; os testes usam repositórios em memória.
+
+## Executar com Docker Compose
+
+```bash
+docker compose up --build
+```
+
+A aplicação aplica as migrações automaticamente, publica a interface em
+`http://localhost:3000` e expõe `GET /health` para verificação de saúde.
 
 📌 Visão Geral
 

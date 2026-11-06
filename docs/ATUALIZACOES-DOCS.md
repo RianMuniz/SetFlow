@@ -7,7 +7,7 @@ Estes arquivos não estavam entre os anexos; aplique os blocos abaixo ajustando 
 - **Cadastro (`POST /api/auth/register`):** a entrada passa a ser `{ nickname, email, password }`. O nickname é obrigatório, tem 3 a 20 caracteres (letras ASCII, números, `.`, `-`, `_`) e é globalmente único sem diferenciar maiúsculas/minúsculas. Nickname duplicado → `409 NICKNAME_ALREADY_EXISTS`; nickname ausente/inválido → `400 VALIDATION_ERROR`.
 - **Representação pública do usuário:** `{ id, nickname, email, status }` (sem senha, hash ou salt), também em `login` e `GET /api/auth/me`.
 - **Login:** continua usando e-mail + senha; contratos HTTP, cookie, expiração de 24 h e rate limit permanecem inalterados.
-- **Persistência:** usuários passam a ser persistidos em PostgreSQL (tabela `users`, ver SPEC-002 §7). IDs de usuário passam a ser `u-<uuid>`. As sessões continuam em memória no servidor.
+- **Persistência:** usuários e sessões passam a ser persistidos em PostgreSQL (tabelas `users` e `sessions`). IDs de usuário passam a ser `u-<uuid>`, e sessões preservam expiração, token CSRF e contexto ativo.
 
 ## docs/arquitetura-decisoes-aprovadas.md (adicionar)
 

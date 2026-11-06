@@ -38,7 +38,7 @@ function poolWithFailure(pool, substring) {
 }
 
 async function main() {
-  console.log('🧪 Iniciando testes de integração PostgreSQL (SPEC-001/SPEC-002)...\n');
+  console.log('🧪 Iniciando testes de integração PostgreSQL (SPEC-001–008)...\n');
 
   let adminPool;
   try {
@@ -87,8 +87,21 @@ async function main() {
         assert.strictEqual(login.status, 200, 'Usuário persistido deve autenticar em nova instância da API.');
         assert.ok(extractCookieValue(login.headers['set-cookie'], 'setflow_session'));
       });
+
+      const persistentSession = extractCookieValue(register.headers['set-cookie'], 'setflow_session');
+      await withServer(createAuthApp({ pool, isProduction: false }), async ({ port: otherPort }) => {
+        const me = await request({
+          port: otherPort,
+          method: 'GET',
+          path: '/api/auth/me',
+          headers: { Cookie: persistentSession }
+        });
+        assert.strictEqual(me.status, 200, 'A sessão deve continuar válida em nova instância.');
+        assert.strictEqual(me.json.user.email, email);
+      });
     });
     console.log('✅ [postgres] usuário persistido autentica em nova instância da aplicação.');
+    console.log('✅ [postgres] sessão persistida continua válida após troca de instância.');
 
     // Constraints do schema
     await assert.rejects(
@@ -134,6 +147,174 @@ async function main() {
     );
     assert.strictEqual(orphans.length, 0, 'Não pode existir banda sem líder.');
     console.log('✅ [postgres] falha na criação do líder faz ROLLBACK: nenhuma banda sem líder.');
+
+    async function register(port, prefix) {
+      const nickname = `${prefix}${crypto.randomBytes(4).toString('hex')}`;
+      const response = await request({
+        port,
+        method: 'POST',
+        path: '/api/auth/register',
+        body: { nickname, email: `${nickname}@teste.com`, password: 'senha1234' }
+      });
+      assert.strictEqual(response.status, 201);
+      return {
+        user: response.json.user,
+        cookie: extractCookieValue(response.headers['set-cookie'], 'setflow_session')
+      };
+    }
+
+    await withServer(createAuthApp({ pool, isProduction: false }), async ({ port }) => {
+      const leader = await register(port, 'lead');
+      const musician = await register(port, 'mus');
+      const outsider = await register(port, 'out');
+
+      let response = await request({
+        port,
+        method: 'POST',
+        path: '/api/bandas',
+        body: { name: `Banda PostgreSQL ${crypto.randomBytes(3).toString('hex')}` },
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 201);
+      const bandId = response.json.band.id;
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/membros`,
+        body: { nickname: musician.user.nickname },
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 201);
+
+      const musicIds = [];
+      for (const [title, key] of [['Abertura', 'C'], ['Encerramento', 'G']]) {
+        response = await request({
+          port,
+          method: 'POST',
+          path: `/api/bandas/${bandId}/musicas`,
+          body: {
+            titulo: `${title} ${crypto.randomBytes(2).toString('hex')}`,
+            tom: key,
+            bpm: 120,
+            duracaoSegundos: 180,
+            observacoes: 'Anotação PostgreSQL',
+            cifraAnexo: 'https://exemplo.test/cifra'
+          },
+          headers: { Cookie: leader.cookie }
+        });
+        assert.strictEqual(response.status, 201);
+        musicIds.push(response.json.music.id);
+      }
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/setlists`,
+        body: {
+          nome: 'Apresentação PostgreSQL',
+          data: '2026-12-20',
+          tempoDisponivelSegundos: 600,
+          musicaIds
+        },
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 201);
+      const setlistId = response.json.setlist.id;
+      assert.strictEqual(response.json.setlist.estado, 'Rascunho');
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/sugestao`,
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.json.sugestao.musicas.length, 2);
+      assert.strictEqual(response.json.sugestao.duracaoTotalSegundos, 360);
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/confirmar`,
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.json.setlist.estado, 'Confirmado');
+
+      response = await request({
+        port,
+        method: 'GET',
+        path: `/api/bandas/${bandId}/setlists-confirmados`,
+        headers: { Cookie: musician.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(response.json.setlists.map((item) => item.id), [setlistId]);
+
+      response = await request({
+        port,
+        method: 'GET',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/visualizacao`,
+        headers: { Cookie: musician.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.json.setlist.musicas[0].nivelDominio, null);
+
+      response = await request({
+        port,
+        method: 'PUT',
+        path: `/api/bandas/${bandId}/musicas/${musicIds[0]}/dominio`,
+        body: { nivel: 'Sei Bem' },
+        headers: { Cookie: musician.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+
+      response = await request({
+        port,
+        method: 'GET',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/visualizacao`,
+        headers: { Cookie: musician.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.json.setlist.musicas[0].nivelDominio, 'Sei Bem');
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/tocar`,
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.json.setlist.estado, 'Tocado');
+
+      response = await request({
+        port,
+        method: 'GET',
+        path: `/api/bandas/${bandId}/historico`,
+        headers: { Cookie: leader.cookie }
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(response.json.historico.map((item) => item.id), [setlistId]);
+
+      response = await request({
+        port,
+        method: 'GET',
+        path: `/api/bandas/${bandId}/historico`,
+        headers: { Cookie: outsider.cookie }
+      });
+      assert.strictEqual(response.status, 403);
+      assert.strictEqual(response.json.error.code, 'BAND_ACCESS_DENIED');
+
+      response = await request({
+        port,
+        method: 'POST',
+        path: `/api/bandas/${bandId}/setlists/${setlistId}/tocar`,
+        headers: { Cookie: musician.cookie }
+      });
+      assert.strictEqual(response.status, 403);
+      assert.strictEqual(response.json.error.code, 'BAND_ACCESS_DENIED');
+    });
+    console.log('✅ [postgres] SPECs 003–008 persistem e respeitam isolamento e permissões.');
 
     console.log('\n🎉 Todos os testes de integração PostgreSQL passaram com sucesso!');
   } finally {

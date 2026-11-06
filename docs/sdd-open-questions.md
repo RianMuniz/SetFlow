@@ -37,7 +37,7 @@ Todas as decisões relevantes da baseline foram aprovadas e registradas conforme
 - Rate limiting de login: 5 tentativas inválidas por IP + e-mail normalizado em 15 minutos, com bloqueio na 6ª tentativa.
 - Contrato de erro da API: envelope JSON padronizado com `error.code` e `error.message`.
 - Identidade pública: `{ id, nickname, email, status }`, sem senha, hash ou salt.
-- Persistência de usuários: PostgreSQL, com IDs `u-<uuid>`; sessões permanecem em memória.
+- Persistência de usuários e sessões: PostgreSQL, com IDs `u-<uuid>` e sessões expirando após 24 horas.
 
 ## Situação final
 

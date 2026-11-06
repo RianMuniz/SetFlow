@@ -35,6 +35,50 @@ function mapBand(row) {
   };
 }
 
+function mapMusic(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    bandaId: row.band_id,
+    titulo: row.title,
+    tom: row.key,
+    bpm: Number(row.bpm),
+    duracaoSegundos: Number(row.duration_seconds),
+    observacoes: row.notes,
+    cifraAnexo: row.chord_attachment
+  };
+}
+
+function mapSetlist(row, items = []) {
+  if (!row) {
+    return null;
+  }
+
+  function mapSession(row) {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      csrfToken: row.csrf_token,
+      activeBandId: row.active_band_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at
+    };
+  }
+
+  return {
+    id: row.id,
+    bandaId: row.band_id,
+    nome: row.name,
+    data: row.event_date,
+    tempoDisponivelSegundos: Number(row.available_seconds),
+    estado: row.state,
+    musicas: items
+  };
+}
+
 function defaultLogger(error) {
   // Nunca registra a connection string; apenas código e mensagem do erro.
   process.stderr.write(`[db] ${error && error.code ? `${error.code} ` : ''}${error && error.message ? error.message : error}\n`);
@@ -215,10 +259,319 @@ function createPgRepositories(pool, options = {}) {
           throw error;
         }
       });
+    },
+
+    updateTransitionThreshold(bandId, threshold) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'UPDATE bands SET transition_threshold_semitones = $2 WHERE id = $1 '
+          + 'RETURNING id, name, transition_threshold_semitones',
+          [bandId, threshold]
+        );
+        return rows[0] ? mapBand(Object.assign(rows[0], { role: null, member_count: 0 })) : null;
+      });
     }
   };
 
-  return { userRepository, bandRepository };
+  const musicRepository = {
+    create(song) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'INSERT INTO music (id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment) '
+          + 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8) '
+          + 'RETURNING id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment',
+          [song.id, song.bandaId, song.titulo, song.tom, song.bpm, song.duracaoSegundos, song.observacoes, song.cifraAnexo]
+        );
+        return mapMusic(rows[0]);
+      });
+    },
+
+    listForBand(bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'SELECT id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment '
+          + 'FROM music WHERE band_id = $1 ORDER BY created_at, id',
+          [bandId]
+        );
+        return rows.map(mapMusic);
+      });
+    },
+
+    findForBand(musicId, bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'SELECT id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment '
+          + 'FROM music WHERE id = $1 AND band_id = $2',
+          [musicId, bandId]
+        );
+        return mapMusic(rows[0]);
+      });
+    },
+
+    update(song) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'UPDATE music SET title = $3, key = $4, bpm = $5, duration_seconds = $6, notes = $7, chord_attachment = $8 '
+          + 'WHERE id = $1 AND band_id = $2 '
+          + 'RETURNING id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment',
+          [song.id, song.bandaId, song.titulo, song.tom, song.bpm, song.duracaoSegundos, song.observacoes, song.cifraAnexo]
+        );
+        return mapMusic(rows[0]);
+      });
+    }
+  };
+
+  const setlistRepository = {
+    createWithItems({ setlist, items }) {
+      return guarded(async () => {
+        const client = await pool.connect();
+        let rollbackFailed = false;
+
+        try {
+          await client.query('BEGIN');
+          const { rows } = await client.query(
+            'INSERT INTO setlists (id, band_id, name, event_date, available_seconds, state) '
+            + "VALUES ($1, $2, $3, $4, $5, 'Rascunho') "
+            + 'RETURNING id, band_id, name, event_date, available_seconds, state',
+            [setlist.id, setlist.bandaId, setlist.nome, setlist.data, setlist.tempoDisponivelSegundos]
+          );
+
+          for (const item of items) {
+            await client.query(
+              'INSERT INTO setlist_items (id, setlist_id, music_id, order_position) VALUES ($1, $2, $3, $4)',
+              [item.id, setlist.id, item.musicaId, item.ordem]
+            );
+          }
+
+          await client.query('COMMIT');
+          return mapSetlist(rows[0], items);
+        } catch (error) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            rollbackFailed = true;
+          }
+          throw error;
+        } finally {
+          client.release(rollbackFailed ? true : undefined);
+        }
+      });
+    },
+
+    findForBand(setlistId, bandId) {
+      return guarded(async () => {
+        const setlistResult = await pool.query(
+          'SELECT id, band_id, name, event_date, available_seconds, state '
+          + 'FROM setlists WHERE id = $1 AND band_id = $2',
+          [setlistId, bandId]
+        );
+        if (!setlistResult.rows[0]) {
+          return null;
+        }
+
+        const itemsResult = await pool.query(
+          'SELECT id, music_id, order_position FROM setlist_items '
+          + 'WHERE setlist_id = $1 ORDER BY order_position',
+          [setlistId]
+        );
+        return mapSetlist(setlistResult.rows[0], itemsResult.rows.map((row) => ({
+          id: row.id,
+          setlistId,
+          musicaId: row.music_id,
+          ordem: row.order_position
+        })));
+      });
+    },
+
+    listConfirmedForBand(bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          "SELECT id, band_id, name, event_date, available_seconds, state FROM setlists "
+          + "WHERE band_id = $1 AND state = 'Confirmado' ORDER BY event_date, id",
+          [bandId]
+        );
+        return Promise.all(rows.map(async (row) => {
+          const items = await pool.query(
+            'SELECT id, music_id, order_position FROM setlist_items '
+            + 'WHERE setlist_id = $1 ORDER BY order_position',
+            [row.id]
+          );
+          return mapSetlist(row, items.rows.map((item) => ({
+            id: item.id,
+            setlistId: row.id,
+            musicaId: item.music_id,
+            ordem: item.order_position
+          })));
+        }));
+      });
+    },
+
+    updateOrder(setlistId, bandId, items) {
+      return guarded(async () => {
+        const client = await pool.connect();
+        let rollbackFailed = false;
+
+        try {
+          await client.query('BEGIN');
+          const current = await client.query(
+            'SELECT id, band_id, name, event_date, available_seconds, state '
+            + 'FROM setlists WHERE id = $1 AND band_id = $2 FOR UPDATE',
+            [setlistId, bandId]
+          );
+          if (!current.rows[0]) {
+            await client.query('ROLLBACK');
+            return null;
+          }
+
+          await client.query('DELETE FROM setlist_items WHERE setlist_id = $1', [setlistId]);
+          for (const item of items) {
+            await client.query(
+              'INSERT INTO setlist_items (id, setlist_id, music_id, order_position) VALUES ($1, $2, $3, $4)',
+              [item.id, setlistId, item.musicaId, item.ordem]
+            );
+          }
+          await client.query('COMMIT');
+          return mapSetlist(current.rows[0], items);
+        } catch (error) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            rollbackFailed = true;
+          }
+          throw error;
+        } finally {
+          client.release(rollbackFailed ? true : undefined);
+        }
+      });
+    },
+
+    updateState(setlistId, bandId, state) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'UPDATE setlists SET state = $3 WHERE id = $1 AND band_id = $2 '
+          + 'RETURNING id, band_id, name, event_date, available_seconds, state',
+          [setlistId, bandId, state]
+        );
+        return rows[0] ? mapSetlist(rows[0], []) : null;
+      });
+    },
+
+    listPlayedForBand(bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          "SELECT id, band_id, name, event_date, available_seconds, state FROM setlists "
+          + "WHERE band_id = $1 AND state = 'Tocado' ORDER BY event_date DESC, id DESC",
+          [bandId]
+        );
+        return Promise.all(rows.map(async (row) => {
+          const items = await pool.query(
+            'SELECT id, music_id, order_position FROM setlist_items '
+            + 'WHERE setlist_id = $1 ORDER BY order_position',
+            [row.id]
+          );
+          return mapSetlist(row, items.rows.map((item) => ({
+            id: item.id,
+            setlistId: row.id,
+            musicaId: item.music_id,
+            ordem: item.order_position
+          })));
+        }));
+      });
+    }
+  };
+
+  const masteryRepository = {
+    find(userId, musicId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'SELECT id, user_id, music_id, level FROM music_mastery WHERE user_id = $1 AND music_id = $2',
+          [userId, musicId]
+        );
+        return rows[0] ? {
+          id: rows[0].id,
+          usuarioId: rows[0].user_id,
+          musicaId: rows[0].music_id,
+          nivel: rows[0].level
+        } : null;
+      });
+    },
+
+    upsert({ id, userId, musicId, level }) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'INSERT INTO music_mastery (id, user_id, music_id, level) VALUES ($1, $2, $3, $4) '
+          + 'ON CONFLICT (user_id, music_id) DO UPDATE SET level = EXCLUDED.level, updated_at = now() '
+          + 'RETURNING id, user_id, music_id, level',
+          [id, userId, musicId, level]
+        );
+        return {
+          id: rows[0].id,
+          usuarioId: rows[0].user_id,
+          musicaId: rows[0].music_id,
+          nivel: rows[0].level
+        };
+      });
+    }
+  };
+
+  const sessionRepository = {
+    create(session) {
+      return guarded(async () => {
+        await pool.query('DELETE FROM sessions WHERE user_id = $1', [session.userId]);
+        const { rows } = await pool.query(
+          'INSERT INTO sessions (id, user_id, csrf_token, active_band_id, created_at, expires_at) '
+          + 'VALUES ($1, $2, $3, $4, $5, $6) '
+          + 'RETURNING id, user_id, csrf_token, active_band_id, created_at, expires_at',
+          [
+            session.id,
+            session.userId,
+            session.csrfToken,
+            session.activeBandId,
+            session.createdAt,
+            session.expiresAt
+          ]
+        );
+        return mapSession(rows[0]);
+      });
+    },
+
+    findById(id) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'SELECT id, user_id, csrf_token, active_band_id, created_at, expires_at '
+          + 'FROM sessions WHERE id = $1',
+          [id]
+        );
+        return rows[0] ? mapSession(rows[0]) : null;
+      });
+    },
+
+    update(session) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'UPDATE sessions SET active_band_id = $2 WHERE id = $1 '
+          + 'RETURNING id, user_id, csrf_token, active_band_id, created_at, expires_at',
+          [session.id, session.activeBandId]
+        );
+        return rows[0] ? mapSession(rows[0]) : null;
+      });
+    },
+
+    delete(id) {
+      return guarded(async () => {
+        await pool.query('DELETE FROM sessions WHERE id = $1', [id]);
+      });
+    }
+  };
+
+  return {
+    userRepository,
+    bandRepository,
+    musicRepository,
+    setlistRepository,
+    masteryRepository,
+    sessionRepository
+  };
 }
 
 module.exports = { createPgRepositories };

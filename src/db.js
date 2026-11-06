@@ -15,7 +15,7 @@ function resolveDatabaseUrl(env = process.env) {
   if (!url || String(url).trim().length === 0) {
     throw new ConfigurationError(
       'DATABASE_URL não configurada. Defina a variável de ambiente, por exemplo: '
-      + 'DATABASE_URL=postgres://usuario:senha@localhost:5432/setflow (veja .env.example).'
+      + 'DATABASE_URL=postgresql://localhost:5432/setflow (veja .env.example).'
     );
   }
 
@@ -56,13 +56,28 @@ async function assertDatabaseReady(pool) {
     throw new ConfigurationError(`Não foi possível conectar ao PostgreSQL: ${error.message}`);
   }
 
-  const { rows } = await pool.query(
-    "SELECT to_regclass('users') AS users, to_regclass('bands') AS bands, to_regclass('band_members') AS band_members"
-  );
+  const expectedTables = [
+    'users',
+    'bands',
+    'band_members',
+    'music',
+    'setlists',
+    'setlist_items',
+    'music_mastery',
+    'sessions'
+  ];
+  const columns = expectedTables
+    .map((table) => `to_regclass('${table}') AS ${table}`)
+    .join(', ');
+  const { rows } = await pool.query(`SELECT ${columns}`);
   const row = rows[0] || {};
 
-  if (!row.users || !row.bands || !row.band_members) {
-    throw new ConfigurationError('Schema do banco ausente. Execute a migração: npm run db:migrate');
+  const missingTables = expectedTables.filter((table) => !row[table]);
+  if (missingTables.length > 0) {
+    throw new ConfigurationError(
+      `Schema do banco incompleto. Tabelas ausentes: ${missingTables.join(', ')}. `
+      + 'Execute a migração: npm run db:migrate'
+    );
   }
 }
 

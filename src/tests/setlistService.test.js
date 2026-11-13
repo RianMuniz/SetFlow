@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { processarSetlist, calcularDistanciaSemitons } = require('../src/setlistService');
+const { processarSetlist, calcularDistanciaSemitons } = require('../setlistService');
 
 console.log('🧪 Iniciando testes unitários da SPEC-004 (SetFlow)...\n');
 

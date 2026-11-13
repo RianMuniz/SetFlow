@@ -1,13 +1,14 @@
 const crypto = require('crypto');
+const { normalizeNickname } = require('./nickname');
 
-const SESSION_TTL_MS = 60 * 60 * 1000;
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
   return { salt, hash };
 }
 
-function createUser({ id, email, password, status = 'active' }) {
+function createUser({ id, email, password, status = 'active', nickname }) {
   if (!id || !email || !password) {
     throw new Error('Dados do usuário incompletos.');
   }
@@ -15,13 +16,22 @@ function createUser({ id, email, password, status = 'active' }) {
   const normalizedEmail = String(email).trim().toLowerCase();
   const { salt, hash } = hashPassword(password);
 
-  return {
+  const user = {
     id,
     email: normalizedEmail,
     passwordHash: hash,
     passwordSalt: salt,
     status
   };
+
+  // nickname é opcional neste serviço para preservar compatibilidade com a SPEC-001
+  // original; a obrigatoriedade é validada no cadastro público (authHttp).
+  if (nickname !== undefined && nickname !== null) {
+    user.nickname = String(nickname).trim();
+    user.nicknameNormalized = normalizeNickname(nickname);
+  }
+
+  return user;
 }
 
 function verifyPassword(password, salt, expectedHash) {
@@ -29,8 +39,14 @@ function verifyPassword(password, salt, expectedHash) {
     return false;
   }
 
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
-  return hash === expectedHash;
+  const hashBuffer = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  const expectedHashBuffer = Buffer.from(expectedHash, 'hex');
+
+  if (hashBuffer.length !== expectedHashBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(hashBuffer, expectedHashBuffer);
 }
 
 function createSession(user) {

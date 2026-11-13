@@ -81,7 +81,36 @@ function requireBandAccess({ bands, userId, bandId }) {
   return band;
 }
 
+const BAND_NAME_MAX_LENGTH = 60;
+
+// Nome exibido: trim + espaços internos colapsados.
+function sanitizeBandName(name) {
+  return String(name === undefined || name === null ? '' : name).replace(/\s+/g, ' ').trim();
+}
+
+// Chave de comparação (coluna name_normalized): sem diferença de maiúsculas/minúsculas.
+function bandNameKey(name) {
+  return sanitizeBandName(name).normalize('NFC').toLowerCase();
+}
+
+// Retorna a mensagem de erro ou null quando válido (usado pela API da SPEC-002).
+function validateBandName(name) {
+  if (typeof name !== 'string' || sanitizeBandName(name).length === 0) {
+    return 'Nome da banda é obrigatório.';
+  }
+
+  if (sanitizeBandName(name).length > BAND_NAME_MAX_LENGTH) {
+    return `O nome da banda deve ter no máximo ${BAND_NAME_MAX_LENGTH} caracteres.`;
+  }
+
+  return null;
+}
+
 module.exports = {
+  BAND_NAME_MAX_LENGTH,
+  sanitizeBandName,
+  bandNameKey,
+  validateBandName,
   createBand,
   addMember,
   getUserBands,

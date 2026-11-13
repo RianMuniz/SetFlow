@@ -224,7 +224,7 @@ async function main() {
           nome: 'Apresentação PostgreSQL',
           data: '2026-12-20',
           tempoDisponivelSegundos: 600,
-          musicaIds
+          musicaIds : musicIds
         },
         headers: { Cookie: leader.cookie }
       });

@@ -8,6 +8,11 @@ function createMemoryRepositories(options = {}) {
   const usersById = options.usersById || new Map();
   const bands = new Map();
   const members = [];
+  const music = new Map();
+  const setlists = new Map();
+  const setlistItems = new Map();
+  const mastery = new Map();
+  const sessions = new Map();
 
   async function findUserByNickname(nicknameNormalized) {
     for (const user of usersById.values()) {
@@ -117,6 +122,16 @@ function createMemoryRepositories(options = {}) {
       return { id: memberId, bandId, userId, role };
     },
 
+    async updateTransitionThreshold(bandId, threshold) {
+      const band = bands.get(bandId);
+      if (!band) {
+        return null;
+      }
+
+      band.transitionThresholdSemitones = threshold;
+      return toBandView(band, null);
+    },
+
     // Somente para testes: simula o desaparecimento de um vínculo.
     __removeMemberForTests(bandId, userId) {
       const index = members.findIndex((member) => member.bandId === bandId && member.userId === userId);
@@ -126,7 +141,142 @@ function createMemoryRepositories(options = {}) {
     }
   };
 
-  return { userRepository, bandRepository };
+  const musicRepository = {
+    async create(song) {
+      music.set(song.id, song);
+      return song;
+    },
+
+    async listForBand(bandId) {
+      return Array.from(music.values()).filter((song) => song.bandaId === bandId);
+    },
+
+    async findForBand(musicId, bandId) {
+      const song = music.get(musicId);
+      return song && song.bandaId === bandId ? song : null;
+    },
+
+    async update(song) {
+      music.set(song.id, song);
+      return song;
+    }
+  };
+
+  const setlistRepository = {
+    async createWithItems({ setlist, items }) {
+      setlists.set(setlist.id, setlist);
+      setlistItems.set(setlist.id, items);
+      return {
+        ...setlist,
+        musicas: items.map((item) => ({ ...item }))
+      };
+    },
+
+    async findForBand(setlistId, bandId) {
+      const setlist = setlists.get(setlistId);
+      if (!setlist || setlist.bandaId !== bandId) {
+        return null;
+      }
+
+      return {
+        ...setlist,
+        musicas: (setlistItems.get(setlistId) || []).map((item) => ({ ...item }))
+      };
+    },
+
+    async listConfirmedForBand(bandId) {
+      return Array.from(setlists.values())
+        .filter((setlist) => setlist.bandaId === bandId && setlist.estado === 'Confirmado')
+        .map((setlist) => ({
+          ...setlist,
+          musicas: (setlistItems.get(setlist.id) || []).map((item) => ({ ...item }))
+        }));
+    },
+
+    async updateOrder(setlistId, bandId, items) {
+      const setlist = setlists.get(setlistId);
+      if (!setlist || setlist.bandaId !== bandId) {
+        return null;
+      }
+
+      setlistItems.set(setlistId, items.map((item) => ({ ...item })));
+      return this.findForBand(setlistId, bandId);
+    },
+
+    async updateState(setlistId, bandId, state) {
+      const setlist = setlists.get(setlistId);
+      if (!setlist || setlist.bandaId !== bandId) {
+        return null;
+      }
+
+      setlist.estado = state;
+      return this.findForBand(setlistId, bandId);
+    },
+
+    async listPlayedForBand(bandId) {
+      return Array.from(setlists.values())
+        .filter((setlist) => setlist.bandaId === bandId && setlist.estado === 'Tocado')
+        .sort((a, b) => b.data.localeCompare(a.data) || b.id.localeCompare(a.id))
+        .map((setlist) => ({
+          ...setlist,
+          musicas: (setlistItems.get(setlist.id) || []).map((item) => ({ ...item }))
+        }));
+    }
+  };
+
+  const masteryRepository = {
+    async find(userId, musicId) {
+      return mastery.get(`${userId}:${musicId}`) || null;
+    },
+
+    async upsert({ id, userId, musicId, level }) {
+      const key = `${userId}:${musicId}`;
+      const current = mastery.get(key);
+      const value = {
+        id: current ? current.id : id,
+        usuarioId: userId,
+        musicaId: musicId,
+        nivel: level
+      };
+      mastery.set(key, value);
+      return value;
+    }
+  };
+
+  const sessionRepository = {
+    async create(session) {
+      for (const [id, current] of sessions.entries()) {
+        if (current.userId === session.userId) {
+          sessions.delete(id);
+        }
+      }
+      sessions.set(session.id, { ...session });
+      return { ...session };
+    },
+
+    async findById(id) {
+      const session = sessions.get(id);
+      return session ? { ...session } : null;
+    },
+
+    async update(session) {
+      sessions.set(session.id, { ...session });
+      return { ...session };
+    },
+
+    async delete(id) {
+      sessions.delete(id);
+    }
+  };
+
+  return {
+    userRepository,
+    bandRepository,
+    musicRepository,
+    setlistRepository,
+    masteryRepository,
+    sessionRepository
+  };
 }
 
 module.exports = { createMemoryRepositories };

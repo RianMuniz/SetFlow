@@ -56,6 +56,7 @@ function createBandRouter({ bandRepository, userRepository, requireAuthenticatio
       }
 
       request.auth.session.activeBandId = band.id;
+      await request.auth.saveSession();
       response.status(201).json({ band, activeBandId: band.id });
     } catch (error) {
       next(error);
@@ -70,6 +71,7 @@ function createBandRouter({ bandRepository, userRepository, requireAuthenticatio
       // INV-004: o contexto ativo nunca aponta para banda sem vínculo.
       if (activeBandId && !bands.some((band) => band.id === activeBandId)) {
         request.auth.session.activeBandId = null;
+        await request.auth.saveSession();
         activeBandId = null;
       }
 
@@ -145,6 +147,7 @@ function createBandRouter({ bandRepository, userRepository, requireAuthenticatio
       const band = await loadBandForMember(request);
 
       request.auth.session.activeBandId = band.id;
+      await request.auth.saveSession();
       response.status(200).json({ activeBandId: band.id, band });
     } catch (error) {
       next(error);

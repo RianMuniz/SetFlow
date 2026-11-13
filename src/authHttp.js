@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const express = require('express');
+const path = require('path');
 const { rateLimit } = require('express-rate-limit');
 const { SESSION_TTL_MS, createUser, verifyPassword } = require('./authService');
 const { createError, sendError } = require('./httpErrors');
@@ -8,6 +9,9 @@ const { DuplicateError } = require('./repositories/errors');
 const { createMemoryRepositories } = require('./repositories/memoryRepositories');
 const { createPgRepositories } = require('./repositories/pgRepositories');
 const { createBandRouter } = require('./bandApi');
+const { createMusicRouter } = require('./musicApi');
+const { createSetlistRouter } = require('./setlistApi');
+const { createMasteryRouter } = require('./masteryApi');
 
 const SESSION_COOKIE_NAME = 'setflow_session';
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -92,6 +96,16 @@ function resolveSessionCookieOptions(isProduction) {
   };
 }
 
+function csrfTokenMatches(expected, received) {
+  if (typeof expected !== 'string' || typeof received !== 'string') {
+    return false;
+  }
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  return expectedBuffer.length === receivedBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
 // Persistência: `options.pool` (PostgreSQL, usado em produção), `options.repositories`
 // (repositórios já montados) ou, sem ambos, repositórios em memória (testes unitários;
 // aceitam `usersByEmail`/`usersById` pré-populados como na SPEC-001).
@@ -111,8 +125,38 @@ function resolveRepositories(options) {
 }
 
 function createAuthApp(options = {}) {
-  const { userRepository, bandRepository } = resolveRepositories(options);
-  const sessionsById = options.sessionsById || new Map();
+  const {
+    userRepository,
+    bandRepository,
+    musicRepository,
+    setlistRepository,
+    masteryRepository,
+    sessionRepository
+  } = resolveRepositories(options);
+  const activeSessionRepository = options.sessionsById
+    ? {
+      async create(session) {
+        for (const [id, current] of options.sessionsById.entries()) {
+          if (current.userId === session.userId) {
+            options.sessionsById.delete(id);
+          }
+        }
+        options.sessionsById.set(session.id, { ...session });
+        return { ...session };
+      },
+      async findById(id) {
+        const session = options.sessionsById.get(id);
+        return session ? { ...session } : null;
+      },
+      async update(session) {
+        options.sessionsById.set(session.id, { ...session });
+        return { ...session };
+      },
+      async delete(id) {
+        options.sessionsById.delete(id);
+      }
+    }
+    : sessionRepository;
   const failedLogins = options.failedLogins || new Map();
   const failedSessionChecks = options.failedSessionChecks || new Map();
 
@@ -140,6 +184,10 @@ function createAuthApp(options = {}) {
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '16kb' }));
+  app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.get('/health', (request, response) => {
+    response.status(200).json({ status: 'ok' });
+  });
 
   function getRateLimitKey(request, email) {
     return `${getClientIp(request)}|${email}`;
@@ -178,29 +226,19 @@ function createAuthApp(options = {}) {
     store.delete(key);
   }
 
-  function invalidateUserSessions(userId) {
-    for (const [sessionId, session] of sessionsById.entries()) {
-      if (session.userId === userId) {
-        sessionsById.delete(sessionId);
-      }
-    }
-  }
-
-  function createSession(userId) {
-    invalidateUserSessions(userId);
-
+  async function createSession(userId) {
     const timestamp = now();
     const sessionId = crypto.randomBytes(32).toString('hex');
     const session = {
       id: sessionId,
       userId,
+      csrfToken: crypto.randomBytes(32).toString('hex'),
       activeBandId: null,
       createdAt: new Date(timestamp).toISOString(),
       expiresAt: new Date(timestamp + SESSION_TTL_MS).toISOString()
     };
 
-    sessionsById.set(sessionId, session);
-    return session;
+    return activeSessionRepository.create(session);
   }
 
   async function readSessionFromRequest(request) {
@@ -211,7 +249,7 @@ function createAuthApp(options = {}) {
       throw createError(401, 'AUTHENTICATION_REQUIRED', 'Autenticação necessária.');
     }
 
-    const session = sessionsById.get(sessionId);
+    const session = await activeSessionRepository.findById(sessionId);
 
     if (!session) {
       throw createError(401, 'AUTHENTICATION_REQUIRED', 'Autenticação necessária.');
@@ -219,18 +257,18 @@ function createAuthApp(options = {}) {
 
     const expiresAt = new Date(session.expiresAt).getTime();
     if (Number.isNaN(expiresAt) || now() > expiresAt) {
-      sessionsById.delete(sessionId);
+      await activeSessionRepository.delete(sessionId);
       throw createError(401, 'SESSION_EXPIRED', 'Sessão expirada.');
     }
 
     const user = await userRepository.findById(session.userId);
     if (!user) {
-      sessionsById.delete(sessionId);
+      await activeSessionRepository.delete(sessionId);
       throw createError(401, 'AUTHENTICATION_REQUIRED', 'Autenticação necessária.');
     }
 
     if (user.status !== 'active') {
-      sessionsById.delete(sessionId);
+      await activeSessionRepository.delete(sessionId);
       throw createError(403, 'ACCOUNT_INACTIVE', 'Conta inativa ou bloqueada.');
     }
 
@@ -252,6 +290,12 @@ function createAuthApp(options = {}) {
   async function requireAuthentication(request, response, next) {
     try {
       request.auth = await readSessionFromRequest(request);
+      request.auth.saveSession = () => activeSessionRepository.update(request.auth.session);
+      const mutatingMethod = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
+      const enforceCsrf = isProduction && mutatingMethod && request.path !== '/login' && request.path !== '/register';
+      if (enforceCsrf && !csrfTokenMatches(request.auth.session.csrfToken, request.get('x-csrf-token'))) {
+        throw createError(403, 'CSRF_INVALID', 'Token CSRF ausente ou inválido.');
+      }
       next();
     } catch (error) {
       if (AUTH_FAILURE_CODES.includes(error.code)) {
@@ -337,11 +381,12 @@ function createAuthApp(options = {}) {
         throw error;
       }
 
-      const session = createSession(user.id);
+      const session = await createSession(user.id);
       response.cookie(cookieName, session.id, sessionCookieOptions);
 
       response.status(201).json({
-        user: toPublicUser(user)
+        user: toPublicUser(user),
+        csrfToken: session.csrfToken
       });
     } catch (error) {
       next(error);
@@ -367,23 +412,31 @@ function createAuthApp(options = {}) {
         throw createError(403, 'ACCOUNT_INACTIVE', 'Conta inativa ou bloqueada.');
       }
       clearFailedAttempts(failedLogins, rateLimitKey);
-      const session = createSession(user.id);
+      const session = await createSession(user.id);
       response.cookie(cookieName, session.id, sessionCookieOptions);
 
       response.status(200).json({
-        user: toPublicUser(user)
+        user: toPublicUser(user),
+        csrfToken: session.csrfToken
       });
     } catch (error) {
       next(error);
     }
   });
 
-  app.post('/api/auth/logout', (request, response) => {
+  app.post('/api/auth/logout', async (request, response) => {
     const cookies = parseCookies(request.headers.cookie);
     const sessionId = cookies[cookieName];
+    const session = sessionId ? await activeSessionRepository.findById(sessionId) : null;
+
+    if (isProduction && session
+      && !csrfTokenMatches(session.csrfToken, request.get('x-csrf-token'))) {
+      sendError(response, 403, 'CSRF_INVALID', 'Token CSRF ausente ou inválido.');
+      return;
+    }
 
     if (sessionId) {
-      sessionsById.delete(sessionId);
+      await activeSessionRepository.delete(sessionId);
     }
 
     clearSessionCookie(response);
@@ -398,9 +451,9 @@ function createAuthApp(options = {}) {
         throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
       }
 
-      const { user } = await readSessionFromRequest(request);
+      const { user, session } = await readSessionFromRequest(request);
       clearFailedAttempts(failedSessionChecks, sessionCheckKey);
-      response.status(200).json({ user: toPublicUser(user) });
+      response.status(200).json({ user: toPublicUser(user), csrfToken: session.csrfToken });
     } catch (error) {
       const clearOnAuthError = error.code === 'AUTHENTICATION_REQUIRED'
         || error.code === 'SESSION_EXPIRED'
@@ -419,6 +472,30 @@ function createAuthApp(options = {}) {
   app.use('/api/bandas', createBandRouter({
     bandRepository,
     userRepository,
+    requireAuthentication,
+    newId
+  }));
+
+  app.use('/api/bandas/:bandId', createMusicRouter({
+    bandRepository,
+    musicRepository,
+    requireAuthentication,
+    newId
+  }));
+
+  app.use('/api/bandas/:bandId', createSetlistRouter({
+    bandRepository,
+    musicRepository,
+    setlistRepository,
+    requireAuthentication,
+    newId
+  }));
+
+  app.use('/api/bandas/:bandId', createMasteryRouter({
+    bandRepository,
+    musicRepository,
+    setlistRepository,
+    masteryRepository,
     requireAuthentication,
     newId
   }));

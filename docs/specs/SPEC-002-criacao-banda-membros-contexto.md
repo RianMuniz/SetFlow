@@ -118,7 +118,7 @@ Observação de segurança: distinguir 404 de 403 revela que um `band_id` existe
 ## 9. Transações e consistência
 - `createWithLeader`: `BEGIN` → `INSERT bands` → `INSERT band_members (leader)` → `COMMIT`; qualquer falha executa `ROLLBACK` (client descartado do pool se o próprio rollback falhar).
 - Cadastros simultâneos com o mesmo e-mail/nickname e adições simultâneas do mesmo membro são resolvidos pelas constraints UNIQUE e mapeados para 409.
-- As sessões continuam em memória do servidor (SPEC-001): reiniciar o processo encerra as sessões e zera o contexto ativo.
+- As sessões são persistidas em PostgreSQL (SPEC-001), portanto reiniciar o processo não encerra sessões válidas nem zera o contexto ativo.
 
 ## 10. Requisitos não funcionais aplicáveis
 - **RNF-01:** listagem/seleção de bandas em menos de 2s (consultas por índice em `band_members.user_id`).

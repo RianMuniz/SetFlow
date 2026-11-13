@@ -6,12 +6,26 @@ function normalizeSetlistName(name) {
   return String(name).trim();
 }
 
+function normalizeSetlistDate(data) {
+  if (typeof data !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+    throw new Error('Data do setlist inválida.');
+  }
+
+  const parsed = new Date(`${data}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== data) {
+    throw new Error('Data do setlist inválida.');
+  }
+
+  return data;
+}
+
 function createSetlist({ id, bandaId, nome, data, tempoDisponivelSegundos, liderUserId, musicas = [] }) {
   if (!id || !bandaId || !liderUserId) {
     throw new Error('Dados do setlist incompletos.');
   }
 
   const normalizedNome = normalizeSetlistName(nome);
+  const normalizedData = normalizeSetlistDate(data);
 
   if (!Number.isFinite(Number(tempoDisponivelSegundos)) || Number(tempoDisponivelSegundos) <= 0) {
     throw new Error('Tempo disponível inválido.');
@@ -25,7 +39,7 @@ function createSetlist({ id, bandaId, nome, data, tempoDisponivelSegundos, lider
     id,
     bandaId,
     nome: normalizedNome,
-    data: data || new Date().toISOString(),
+    data: normalizedData,
     tempoDisponivelSegundos: Number(tempoDisponivelSegundos),
     estado: 'Rascunho',
     liderUserId,
@@ -75,5 +89,6 @@ module.exports = {
   createSetlist,
   canModifySetlist,
   addMusicToSetlist,
-  normalizeSetlistName
+  normalizeSetlistName,
+  normalizeSetlistDate
 };

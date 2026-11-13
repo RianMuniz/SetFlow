@@ -144,7 +144,101 @@ const input = { bandId: 'b-1', memberId: 'm-1', name: 'Banda', nameNormalized: '
     console.log('✅ Consultas de banda/membro são parametrizadas e filtradas por usuário e band_id.');
   }
 
-  // 7. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
+  // 7. Sessões mapeiam activeBandId corretamente ao criar, ler e atualizar
+  {
+    const createdAt = new Date('2026-01-01T10:00:00.000Z');
+    const expiresAt = new Date('2026-01-01T12:00:00.000Z');
+    const queries = [];
+    const pool = {
+      async query(text, params = []) {
+        queries.push({ text, params });
+        if (text.startsWith('INSERT INTO sessions')) {
+          return {
+            rows: [{
+              id: params[0],
+              user_id: params[1],
+              csrf_token: params[2],
+              active_band_id: params[3],
+              created_at: params[4],
+              expires_at: params[5]
+            }],
+            rowCount: 1
+          };
+        }
+
+        if (text.startsWith('SELECT id, user_id, csrf_token, active_band_id')) {
+          return {
+            rows: [{
+              id: params[0],
+              user_id: 'u-1',
+              csrf_token: 'csrf-1',
+              active_band_id: 'b-2',
+              created_at: createdAt,
+              expires_at: expiresAt
+            }],
+            rowCount: 1
+          };
+        }
+
+        if (text.startsWith('UPDATE sessions SET active_band_id')) {
+          return {
+            rows: [{
+              id: params[0],
+              user_id: 'u-1',
+              csrf_token: 'csrf-1',
+              active_band_id: params[1],
+              created_at: createdAt,
+              expires_at: expiresAt
+            }],
+            rowCount: 1
+          };
+        }
+
+        return { rows: [], rowCount: 0 };
+      }
+    };
+    const { sessionRepository } = createPgRepositories(pool, { logger: silent });
+    const created = await sessionRepository.create({
+      id: 's-1',
+      userId: 'u-1',
+      csrfToken: 'csrf-1',
+      activeBandId: 'b-1',
+      createdAt,
+      expiresAt
+    });
+    const found = await sessionRepository.findById('s-1');
+    const updated = await sessionRepository.update({ id: 's-1', activeBandId: 'b-3' });
+
+    assert.deepStrictEqual(created, {
+      id: 's-1',
+      userId: 'u-1',
+      csrfToken: 'csrf-1',
+      activeBandId: 'b-1',
+      createdAt,
+      expiresAt
+    });
+    assert.deepStrictEqual(found, {
+      id: 's-1',
+      userId: 'u-1',
+      csrfToken: 'csrf-1',
+      activeBandId: 'b-2',
+      createdAt,
+      expiresAt
+    });
+    assert.deepStrictEqual(updated, {
+      id: 's-1',
+      userId: 'u-1',
+      csrfToken: 'csrf-1',
+      activeBandId: 'b-3',
+      createdAt,
+      expiresAt
+    });
+    assert.strictEqual(queries[0].text, 'DELETE FROM sessions WHERE user_id = $1');
+    assert.strictEqual(queries[1].text.startsWith('INSERT INTO sessions'), true);
+    console.log('✅ Sessões no PostgreSQL mantêm o mapeamento de activeBandId e campos de sessão.');
+  }
+
+  // 8. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'setflow-mig-'));
     fs.writeFileSync(path.join(dir, '002_b.sql'), 'SELECT 2;');
@@ -171,7 +265,7 @@ const input = { bandId: 'b-1', memberId: 'm-1', name: 'Banda', nameNormalized: '
     console.log('✅ Migração aplica apenas arquivos pendentes, em ordem, dentro de transação.');
   }
 
-  // 8. Configuração clara sem DATABASE_URL (e sem exigir banco ao importar módulos)
+  // 9. Configuração clara sem DATABASE_URL (e sem exigir banco ao importar módulos)
   {
     assert.throws(() => resolveDatabaseUrl({}), (error) => error instanceof ConfigurationError && /DATABASE_URL/.test(error.message));
     assert.strictEqual(resolveDatabaseUrl({ DATABASE_URL: ' postgres://h/db ' }), 'postgres://h/db');

@@ -312,7 +312,7 @@ async function main() {
         headers: { Cookie: outsider.cookie }
       });
       assert.strictEqual(response.status, 403);
-      assert.strictEqual(response.json.error.code, 'LEADER_REQUIRED');
+      assert.strictEqual(response.json.error.code, 'BAND_ACCESS_DENIED');
 
       response = await request({
         port,

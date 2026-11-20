@@ -1,0 +1,284 @@
+diff
+--- a/.env.example	2026-11-20 00:31:20.109979006 +0000
++++ b/.env.example	2026-11-20 00:41:20.050130376 +0000
+@@ -4,3 +4,6 @@
+ NODE_ENV=development
+ # Base dos links de redefinição de senha enviados por e-mail
+ APP_BASE_URL=http://localhost:3000
++# Cookie de sessão Secure: padrão = só em NODE_ENV=production. Em HTTP (sem HTTPS) fora de
++# localhost, como no celular pela rede local, use false.
++# COOKIE_SECURE=false
+diff
+--- a/README.md	2026-11-20 00:31:20.110175892 +0000
++++ b/README.md	2026-11-20 00:41:20.050281971 +0000
+@@ -64,6 +64,12 @@
+ - `GET /api/bandas/:bandId/setlists/:setlistId/visualizacao`
+ - `PUT /api/bandas/:bandId/musicas/:musicId/dominio`
+ 
++## Acessar pelo celular (rede local)
++
++Com `docker compose up`, o app abre no PC em `http://localhost:3000` e, no celular na mesma rede Wi-Fi, em `http://IP-DO-PC:3000` (descubra o IP com `ipconfig` no Windows; se não abrir, libere a porta 3000 no firewall).
++
++O cookie de sessão usa `Secure` em produção, e `Secure` só funciona em HTTPS ou em `localhost`. Por isso o `docker-compose.yml` define `COOKIE_SECURE: "false"` (HTTP puro). Se você publicar atrás de HTTPS, volte para `"true"` (ou remova a variável). Cada usuário mantém **uma sessão por vez** (SPEC-001): entrar em outro dispositivo encerra a sessão do primeiro, que volta para a tela de login.
++
+ ## Esqueci minha senha
+ 
+ Na tela de login, **"Esqueci minha senha"** pede o e-mail da conta. Se ele estiver cadastrado, o sistema gera um link de uso único, válido por **30 minutos**, no formato `APP_BASE_URL/#reset=<token>`. Abrir o link mostra o formulário de nova senha (8 a 128 caracteres); ao concluir, **todas as sessões da conta são encerradas** e o usuário entra com a nova senha.
+diff
+--- a/docker-compose.yml	2026-11-20 00:31:20.109832254 +0000
++++ b/docker-compose.yml	2026-11-20 00:41:20.050009734 +0000
+@@ -22,6 +22,9 @@
+       DATABASE_URL: postgresql://setflow:setflow@db:5432/setflow
+       PORT: 3000
+       NODE_ENV: production
++      # Este Compose serve HTTP puro. Com Secure ativo o celular (acessando pelo IP da rede)
++      # descarta o cookie de sessão. Use "true" quando houver HTTPS (proxy reverso).
++      COOKIE_SECURE: "false"
+       # Base dos links enviados por e-mail (redefinição de senha).
+       APP_BASE_URL: http://localhost:3000
+     ports:
+diff
+--- a/docs/arquitetura-decisoes-aprovadas.md	2026-11-20 00:31:29.459806106 +0000
++++ b/docs/arquitetura-decisoes-aprovadas.md	2026-11-20 00:41:20.050404417 +0000
+@@ -106,7 +106,7 @@
+ ## Decisões resolvidas na implementação da SPEC-001
+ 
+ - **Autenticação:** sessão HTTP no servidor, identificada por cookie.
+-- **Cookie de sessão:** `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` apenas em produção.
++- **Cookie de sessão:** `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` apenas em produção (sobrescrevível por `COOKIE_SECURE`; `false` para implantações em HTTP, como o Docker Compose na rede local).
+ - **Expiração de sessão:** 24 horas, sem renovação automática.
+ - **Cadastro de usuário:** público (self-signup), com nickname obrigatório.
+ - **Rate limiting:** 5 tentativas inválidas por `IP + e-mail normalizado` em janela de 15 minutos; bloqueio na 6ª tentativa com `HTTP 429`; limpeza após login bem-sucedido.
+diff
+--- a/package.json	2026-11-20 00:31:29.460750004 +0000
++++ b/package.json	2026-11-20 00:41:20.050546842 +0000
+@@ -5,7 +5,7 @@
+   "main": "src/server.js",
+   "scripts": {
+     "start": "node src/server.js",
+-    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
++    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/cookieSecurity.test.js && node src/tests/cookieSecureHttp.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
+     "db:migrate": "node src/migrate.js",
+     "test:pg": "node src/tests/pg/pgIntegration.test.js"
+   },
+diff
+--- a/public/app.js	2026-11-20 00:32:27.169981754 +0000
++++ b/public/app.js	2026-11-20 00:41:20.049859307 +0000
+@@ -19,6 +19,16 @@
+ const formatDuration = (seconds) => `${Math.floor(Number(seconds || 0) / 60)}m ${Number(seconds || 0) % 60}s`;
+ const dateLabel = (value) => new Date(`${String(value ?? '').slice(0, 10)}T00:00:00`).toLocaleDateString('pt-BR');
+ 
++// Sessão encerrada (ex.: login em outro dispositivo, já que cada usuário mantém uma só sessão):
++// volta para a tela de login em vez de deixar o app travado com erros.
++function handleSessionLost() {
++  state.user = null; state.band = null; state.csrfToken = null; state.drafts = [];
++  document.querySelectorAll('.modal-backdrop').forEach((modal) => modal.remove());
++  render();
++  $('#auth-info').textContent = '';
++  $('#auth-error').textContent = 'Sua sessão terminou, por exemplo por ter entrado em outro dispositivo. Entre novamente.';
++}
++
+ async function api(url, options = {}) {
+   const method = (options.method || 'GET').toUpperCase();
+   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+@@ -32,7 +42,13 @@
+     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
+   });
+   const data = await response.json().catch(() => ({}));
+-  if (!response.ok) throw new Error(data.error?.message || 'Não foi possível concluir a operação.');
++  if (!response.ok) {
++    const error = new Error(data.error?.message || 'Não foi possível concluir a operação.');
++    error.status = response.status;
++    error.code = data.error?.code;
++    if (response.status === 401 && state.user && !url.startsWith('/api/auth/')) handleSessionLost();
++    throw error;
++  }
+   return data;
+ }
+ 
+@@ -179,6 +195,7 @@
+   if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
+   const response = await fetch(chordUrl(songId), { method: 'PUT', credentials: 'same-origin', headers, body: file });
+   const data = await response.json().catch(() => ({}));
++  if (response.status === 401 && state.user) handleSessionLost();
+   if (!response.ok) throw new Error(data.error?.message || 'Não foi possível enviar a cifra.');
+ }
+ 
+@@ -398,7 +415,14 @@
+     const result = await api(`/api/auth/${state.authMode === 'register' ? 'register' : 'login'}`, { method: 'POST', body });
+     state.csrfToken = result.csrfToken || null;
+     state.user = result.user; $('#auth-error').textContent = ''; $('#auth-info').textContent = ''; await loadBands(); await loadBandData(); render();
+-  } catch (error) { $('#auth-error').textContent = error.message; }
++  } catch (error) {
++    // Login aceito, mas a chamada seguinte voltou 401: o navegador não guardou o cookie de sessão.
++    const cookieLost = error.code === 'AUTHENTICATION_REQUIRED';
++    if (cookieLost) { state.user = null; state.csrfToken = null; }
++    $('#auth-error').textContent = cookieLost
++      ? 'O login foi aceito, mas este navegador não guardou a sessão. Verifique se os cookies estão ativados e, se o acesso for por HTTP (sem HTTPS), configure COOKIE_SECURE=false no servidor.'
++      : error.message;
++  }
+ });
+ 
+ $('#logout-button').addEventListener('click', async () => {
+diff
+--- a/src/authHttp.js	2026-11-20 00:31:20.108358465 +0000
++++ b/src/authHttp.js	2026-11-20 00:41:20.048937401 +0000
+@@ -12,6 +12,7 @@
+   buildResetEmail
+ } = require('./passwordReset');
+ const { createConsoleMailer } = require('./mailer');
++const { resolveCookieSecure } = require('./cookieSecurity');
+ const { createError, sendError } = require('./httpErrors');
+ const { normalizeNickname, validateNickname } = require('./nickname');
+ const { DuplicateError } = require('./repositories/errors');
+@@ -97,11 +98,11 @@
+     }, {});
+ }
+ 
+-function resolveSessionCookieOptions(isProduction) {
++function resolveSessionCookieOptions(secure) {
+   return {
+     httpOnly: true,
+     sameSite: 'lax',
+-    secure: isProduction,
++    secure,
+     path: '/',
+     maxAge: SESSION_TTL_MS
+   };
+@@ -192,7 +193,11 @@
+ 
+   const newId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
+   const app = express();
+-  const sessionCookieOptions = resolveSessionCookieOptions(isProduction);
++  const cookieSecure = resolveCookieSecure(
++    options.cookieSecure !== undefined ? options.cookieSecure : process.env.COOKIE_SECURE,
++    isProduction
++  );
++  const sessionCookieOptions = resolveSessionCookieOptions(cookieSecure);
+   const loginIpRateLimiter = rateLimit({
+     windowMs: RATE_LIMIT_WINDOW_MS,
+     limit: RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS,
+diff
+--- a/src/cookieSecurity.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/cookieSecurity.js	2026-11-20 00:41:20.048662396 +0000
+@@ -0,0 +1,19 @@
++// Atributo Secure do cookie de sessão.
++// Padrão (SPEC-001): Secure em produção. Só que Secure exige HTTPS: em HTTP puro o navegador
++// descarta o cookie, exceto em http://localhost. Quem publica sem HTTPS (por exemplo o Docker
++// Compose acessado pelo celular via IP da rede) define COOKIE_SECURE=false.
++function resolveCookieSecure(explicit, isProduction) {
++  const value = String(explicit === undefined || explicit === null ? '' : explicit).trim().toLowerCase();
++
++  if (value === 'true' || value === '1') {
++    return true;
++  }
++
++  if (value === 'false' || value === '0') {
++    return false;
++  }
++
++  return Boolean(isProduction);
++}
++
++module.exports = { resolveCookieSecure };
+diff
+--- a/src/server.js	2026-11-20 00:30:07.103994333 +0000
++++ b/src/server.js	2026-11-20 00:41:20.049066907 +0000
+@@ -1,5 +1,6 @@
+ const { createAuthApp } = require('./authHttp');
+ const { createPool, assertDatabaseReady, ConfigurationError } = require('./db');
++const { resolveCookieSecure } = require('./cookieSecurity');
+ 
+ const PORT = Number(process.env.PORT || 3000);
+ 
+@@ -17,6 +18,10 @@
+ 
+   const server = app.listen(PORT, () => {
+     process.stdout.write(`SetFlow server running on port ${PORT}\n`);
++    if (resolveCookieSecure(process.env.COOKIE_SECURE, process.env.NODE_ENV === 'production')) {
++      process.stdout.write('Cookie de sessão com Secure: o login só funciona em HTTPS ou em localhost. '
++        + 'Para acessar por HTTP (ex.: celular na rede local), defina COOKIE_SECURE=false.\n');
++    }
+   });
+ 
+   const shutdown = () => {
+diff
+--- a/src/tests/cookieSecureHttp.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/cookieSecureHttp.test.js	2026-11-20 00:41:20.050508376 +0000
+@@ -0,0 +1,43 @@
++const assert = require('assert');
++const { createAuthApp, request, withServer } = require('./httpTestUtils');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++
++console.log('🧪 Iniciando testes do atributo Secure do cookie de sessão...\n');
++
++async function sessionCookieFor(appOptions) {
++  const app = createAuthApp({ repositories: createMemoryRepositories(), ...appOptions });
++  let header = '';
++
++  await withServer(app, async ({ port }) => {
++    const response = await request({
++      port,
++      method: 'POST',
++      path: '/api/auth/register',
++      body: { nickname: 'ana', email: 'ana@teste.com', password: 'senha1234' }
++    });
++    assert.strictEqual(response.status, 201);
++    header = [].concat(response.headers['set-cookie']).find((cookie) => cookie.startsWith('setflow_session=')) || '';
++  });
++
++  return header;
++}
++
++(async function main() {
++  const productionDefault = await sessionCookieFor({ isProduction: true, cookieSecure: undefined });
++  assert.match(productionDefault, /; Secure/i);
++  assert.match(productionDefault, /HttpOnly/i);
++
++  const productionHttp = await sessionCookieFor({ isProduction: true, cookieSecure: false });
++  assert.doesNotMatch(productionHttp, /; Secure/i, 'COOKIE_SECURE=false deve permitir login por HTTP');
++  assert.match(productionHttp, /HttpOnly/i);
++  assert.match(productionHttp, /SameSite=Lax/i);
++
++  const developmentSecure = await sessionCookieFor({ isProduction: false, cookieSecure: true });
++  assert.match(developmentSecure, /; Secure/i);
++
++  console.log('✅ Secure por padrão em produção; COOKIE_SECURE=false libera HTTP sem perder HttpOnly/SameSite.');
++  console.log('\n🎉 Todos os testes do cookie de sessão passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff
+--- a/src/tests/cookieSecurity.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/cookieSecurity.test.js	2026-11-20 00:41:20.050483821 +0000
+@@ -0,0 +1,17 @@
++const assert = require('assert');
++const { resolveCookieSecure } = require('../cookieSecurity');
++
++assert.strictEqual(resolveCookieSecure(undefined, true), true);
++assert.strictEqual(resolveCookieSecure(undefined, false), false);
++assert.strictEqual(resolveCookieSecure('', true), true);
++assert.strictEqual(resolveCookieSecure('false', true), false);
++assert.strictEqual(resolveCookieSecure(' FALSE ', true), false);
++assert.strictEqual(resolveCookieSecure('0', true), false);
++assert.strictEqual(resolveCookieSecure('true', false), true);
++assert.strictEqual(resolveCookieSecure('1', false), true);
++assert.strictEqual(resolveCookieSecure(false, true), false);
++assert.strictEqual(resolveCookieSecure(true, false), true);
++assert.strictEqual(resolveCookieSecure('talvez', true), true);
++assert.strictEqual(resolveCookieSecure('talvez', false), false);
++
++console.log('✅ COOKIE_SECURE: padrão segue NODE_ENV; true/false/1/0 sobrescrevem.');
+diff
+--- a/src/tests/frontend.test.js	2026-11-20 00:31:29.461290514 +0000
++++ b/src/tests/frontend.test.js	2026-11-20 00:41:20.050623675 +0000
+@@ -22,6 +22,8 @@
+     assert.match(script.body, /name="cifra" type="file"/);
+     assert.doesNotMatch(script.body, /name="cifraAnexo"/);
+     assert.match(script.body, /\/api\/auth\/password-reset\/request/);
++    assert.match(script.body, /handleSessionLost/);
++    assert.match(script.body, /error\.status = response\.status/);
+     assert.match(script.body, /\/api\/auth\/password-reset\/confirm/);
+     const submit = script.body.slice(script.body.indexOf("$('#auth-form').addEventListener"));
+     const csrfAt = submit.indexOf('state.csrfToken = result.csrfToken');

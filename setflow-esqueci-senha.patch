@@ -1,0 +1,908 @@
+diff
+--- a/.env.example	2026-11-19 00:23:24.295084129 +0000
++++ b/.env.example	2026-11-20 00:31:20.109979006 +0000
+@@ -2,3 +2,5 @@
+ DATABASE_URL=postgresql://localhost:5432/setflow
+ PORT=3000
+ NODE_ENV=development
++# Base dos links de redefinição de senha enviados por e-mail
++APP_BASE_URL=http://localhost:3000
+diff
+--- a/README.md	2026-11-19 00:23:24.298674235 +0000
++++ b/README.md	2026-11-20 00:31:20.110175892 +0000
+@@ -64,6 +64,16 @@
+ - `GET /api/bandas/:bandId/setlists/:setlistId/visualizacao`
+ - `PUT /api/bandas/:bandId/musicas/:musicId/dominio`
+ 
++## Esqueci minha senha
++
++Na tela de login, **"Esqueci minha senha"** pede o e-mail da conta. Se ele estiver cadastrado, o sistema gera um link de uso único, válido por **30 minutos**, no formato `APP_BASE_URL/#reset=<token>`. Abrir o link mostra o formulário de nova senha (8 a 128 caracteres); ao concluir, **todas as sessões da conta são encerradas** e o usuário entra com a nova senha.
++
++- **Sem enumeração de contas:** `POST /api/auth/password-reset/request` responde sempre `202` com a mesma mensagem. Limite: 3 pedidos por `IP + e-mail` em 15 minutos.
++- **Token seguro:** 256 bits aleatórios; no banco fica só o hash SHA-256 (`password_reset_tokens`). Um novo pedido invalida o anterior. O token vai no fragmento da URL (`#`), que não chega ao servidor nem aparece em logs de acesso.
++- **Envio do e-mail:** o projeto ainda não tem provedor de e-mail. O padrão é o *console mailer*, que **escreve a mensagem, com o link, no log do servidor**: `docker compose logs app` (ou o terminal do `npm start`). Para enviar e-mail de verdade, passe outro objeto `{ send({ to, subject, text }) }` em `createAuthApp({ mailer })` (veja `src/mailer.js`). Defina `APP_BASE_URL` com o endereço público do sistema.
++
++Endpoints: `POST /api/auth/password-reset/request` (`{ email }`) e `POST /api/auth/password-reset/confirm` (`{ token, password }`; erro `400 INVALID_RESET_TOKEN` para link inválido, expirado ou já usado).
++
+ ## Cifra anexada
+ 
+ O líder anexa à música um arquivo **PDF, PNG, JPG ou TXT de até 5 MB**. O tipo é conferido pelo conteúdo do arquivo (HTML, SVG e outros formatos são recusados) e o arquivo fica no PostgreSQL (`music_chord_files`), então o Docker Compose não precisa de volume extra. Todos os membros da banda podem abrir a cifra no repertório e no setlist confirmado.
+diff
+--- a/db/migrations/009_password_reset_tokens.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/db/migrations/009_password_reset_tokens.sql	2026-11-20 00:30:07.149210428 +0000
+@@ -0,0 +1,12 @@
++-- Redefinição de senha por link de uso único. Só o hash SHA-256 do token é guardado:
++-- quem ler o banco não consegue montar um link válido.
++
++CREATE TABLE password_reset_tokens (
++  token_hash  TEXT PRIMARY KEY,
++  user_id     TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
++  created_at  TIMESTAMPTZ NOT NULL,
++  expires_at  TIMESTAMPTZ NOT NULL,
++  used_at     TIMESTAMPTZ
++);
++
++CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens (user_id);
+diff
+--- a/docker-compose.yml	2026-11-19 00:23:24.295968177 +0000
++++ b/docker-compose.yml	2026-11-20 00:31:20.109832254 +0000
+@@ -22,6 +22,8 @@
+       DATABASE_URL: postgresql://setflow:setflow@db:5432/setflow
+       PORT: 3000
+       NODE_ENV: production
++      # Base dos links enviados por e-mail (redefinição de senha).
++      APP_BASE_URL: http://localhost:3000
+     ports:
+       - "3000:3000"
+ 
+diff
+--- a/docs/arquitetura-decisoes-aprovadas.md	2026-11-19 00:23:24.296258023 +0000
++++ b/docs/arquitetura-decisoes-aprovadas.md	2026-11-20 00:31:29.459806106 +0000
+@@ -68,7 +68,6 @@
+ 
+ As questões abaixo continuam abertas por não terem sido resolvidas no documento de atualizações:
+ 
+-- **Recuperação de senha:** fluxo fora do MVP ou a definir posteriormente.
+ - **Representação de tom e enarmonia:** tratamento de notas enarmônicas e afinação alternativa.
+ - **Validação de BPM:** limites e obrigatoriedade do campo.
+ - **Backup e recuperação de dados:** estratégia de backup, replicação e recuperação de desastre.
+@@ -93,7 +92,7 @@
+ | Bandas | Nome único por criador e criação transacional | ✅ Aprovado |
+ | Contexto ativo | Endpoint dedicado e sessão do servidor | ✅ Aprovado |
+ | Repositórios | PostgreSQL em produção e memória nos testes | ✅ Aprovado |
+-| Recuperação de senha | Fora do MVP ou a definir | ⏳ Em aberto |
++| Recuperação de senha | Link de uso único (30 min), envio de e-mail plugável | ✅ Aprovado |
+ | Enarmonia | Normalização de tons | ⏳ Em aberto |
+ | BPM | Validação | ⏳ Em aberto |
+ | Backup | Estratégia | ⏳ Em aberto |
+diff
+--- a/docs/sdd-open-questions.md	2026-11-19 00:23:24.297797605 +0000
++++ b/docs/sdd-open-questions.md	2026-11-20 00:31:29.459371812 +0000
+@@ -28,6 +28,7 @@
+ - **Identificador para adicionar membros:** **resolvida** — nickname globalmente único.
+ - **Membro duplicado:** **resolvida** — `409 MEMBER_ALREADY_EXISTS`.
+ - **Cifra anexada (RF-05/RF-15):** **resolvida** — arquivo PDF, PNG, JPG ou TXT de até 5 MB, um por música, guardado em `music_chord_files` (PostgreSQL), tipo validado pelo conteúdo, download liberado a qualquer membro da banda e alteração restrita ao líder. O campo de texto `cifraAnexo` é mantido apenas para dados antigos.
++- **Recuperação de senha:** **resolvida** — link de uso único por e-mail (256 bits, hash SHA-256 no banco, validade de 30 minutos, novo pedido invalida o anterior), resposta `202` idêntica para contas existentes e inexistentes, limite de 3 pedidos por IP + e-mail em 15 minutos, encerramento de todas as sessões ao redefinir. Sem provedor de e-mail no projeto, o envio é plugável e o padrão grava a mensagem no log do servidor.
+ - **Contexto ativo:** **resolvida** — endpoint dedicado `POST /api/bandas/:bandId/ativa`, armazenado em sessão do servidor e revalidado contra o vínculo.
+ 
+ ## Decisões fechadas na SPEC-001
+@@ -42,4 +43,4 @@
+ 
+ ## Situação final
+ 
+-A baseline foi estabilizada para a implementação das Specs. Permanecem em aberto somente questões não resolvidas pelos documentos de atualização, como recuperação de senha, MFA, backup, observabilidade, deploy, versionamento de API, concorrência, validação de BPM e estratégia de remoção.
++A baseline foi estabilizada para a implementação das Specs. Permanecem em aberto somente questões não resolvidas pelos documentos de atualização, como MFA, backup, observabilidade, deploy, versionamento de API, concorrência, validação de BPM e estratégia de remoção.
+diff
+--- a/docs/specs/SPEC-001-autenticacao-identidade-usuario.md	2026-11-19 00:23:24.298004169 +0000
++++ b/docs/specs/SPEC-001-autenticacao-identidade-usuario.md	2026-11-20 00:31:29.460205340 +0000
+@@ -40,7 +40,7 @@
+ 
+ ### Fora do escopo
+ 
+-- Recuperação de senha, MFA, SSO e autenticação social.
++- MFA, SSO e autenticação social. (A recuperação de senha, antes fora de escopo, foi incluída depois: ver README, "Esqueci minha senha".)
+ - Gestão de banda, repertório, setlist e demais Specs (SPEC-002+).
+ 
+ ## 4. Contratos HTTP implementados
+diff
+--- a/package.json	2026-11-19 00:23:24.298370671 +0000
++++ b/package.json	2026-11-20 00:31:29.460750004 +0000
+@@ -5,7 +5,7 @@
+   "main": "src/server.js",
+   "scripts": {
+     "start": "node src/server.js",
+-    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/csrf.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
++    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
+     "db:migrate": "node src/migrate.js",
+     "test:pg": "node src/tests/pg/pgIntegration.test.js"
+   },
+diff
+--- a/public/app.js	2026-11-19 00:23:24.344517976 +0000
++++ b/public/app.js	2026-11-20 00:32:27.169981754 +0000
+@@ -299,13 +299,61 @@
+   await loadBandData(); state.screen = 'home'; render(); showToast(`Banda ${state.band.name} selecionada.`);
+ }
+ 
++function openForgotPassword() {
++  const email = $('#auth-form').elements.email.value.trim();
++  const modal = showModal('Redefinir senha', `<p class="muted">Informe o e-mail da sua conta. Se ele estiver cadastrado, enviaremos um link para criar uma nova senha (válido por 30 minutos).</p><form class="form-stack"><label>E-mail<input name="email" type="email" autocomplete="email" value="${escapeHtml(email)}" required></label><button class="primary" type="submit">Enviar link</button><p class="error form-error"></p></form>`);
++  modal.querySelector('form').addEventListener('submit', async (event) => {
++    event.preventDefault();
++    const form = event.currentTarget;
++    const submit = form.querySelector('button[type="submit"]');
++    submit.disabled = true;
++    try {
++      const result = await api('/api/auth/password-reset/request', { method: 'POST', body: { email: new FormData(form).get('email') } });
++      form.innerHTML = `<p class="success">${escapeHtml(result.message)}</p><button class="secondary" type="button" data-close-modal>Fechar</button>`;
++    } catch (error) {
++      form.querySelector('.form-error').textContent = error.message;
++      submit.disabled = false;
++    }
++  });
++}
++
++function openResetPassword(token) {
++  const modal = showModal('Nova senha', `<form class="form-stack"><label>Nova senha<input name="password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></label><label>Confirmar nova senha<input name="confirm" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></label><button class="primary" type="submit">Redefinir senha</button><p class="error form-error"></p></form>`);
++  modal.querySelector('form').addEventListener('submit', async (event) => {
++    event.preventDefault();
++    const form = new FormData(event.currentTarget);
++    const errorBox = modal.querySelector('.form-error');
++    if (form.get('password') !== form.get('confirm')) { errorBox.textContent = 'As senhas não conferem.'; return; }
++    try {
++      await api('/api/auth/password-reset/confirm', { method: 'POST', body: { token, password: form.get('password') } });
++      modal.closest('.modal-backdrop').remove();
++      state.user = null; state.band = null; state.csrfToken = null; state.drafts = []; render();
++      $('#auth-error').textContent = ''; $('#auth-info').textContent = 'Senha redefinida. Entre com a nova senha.';
++    } catch (error) { errorBox.textContent = error.message; }
++  });
++}
++
++// Link do e-mail: /#reset=<token>. O token sai da barra de endereço imediatamente.
++function takeResetToken() {
++  const token = (location.hash.match(/^#reset=([0-9a-f]{64})$/) || [])[1];
++  if (token) history.replaceState(null, '', location.pathname + location.search);
++  return token;
++}
++
++window.addEventListener('hashchange', () => {
++  const token = takeResetToken();
++  if (token) openResetPassword(token);
++});
++
+ async function boot() {
++  const resetToken = takeResetToken();
+   try {
+     const data = await api('/api/auth/me');
+     state.user = data.user;
+     state.csrfToken = data.csrfToken || null;
+     await loadBands(); await loadBandData(); render();
+   } catch { render(); }
++  if (resetToken) openResetPassword(resetToken);
+ }
+ 
+ document.addEventListener('click', async (event) => {
+@@ -315,6 +363,8 @@
+     document.querySelectorAll('[data-auth-mode]').forEach((button) => button.classList.toggle('active', button === authMode));
+     $('#nickname-field').classList.toggle('hidden', state.authMode !== 'register');
+     $('#auth-submit').textContent = state.authMode === 'register' ? 'Criar conta' : 'Entrar';
++    $('#forgot-password').classList.toggle('hidden', state.authMode === 'register');
++    $('#auth-info').textContent = '';
+     return;
+   }
+   const screen = event.target.closest('[data-screen]');
+@@ -322,6 +372,7 @@
+   const band = event.target.closest('[data-switch-band]');
+   if (band) { await switchBand(band.dataset.switchBand); return; }
+   const action = event.target.closest('[data-action]')?.dataset.action;
++  if (action === 'forgot-password') openForgotPassword();
+   if (action === 'new-band') openBandForm();
+   if (action === 'threshold') openThresholdForm();
+   if (action === 'new-music') openMusicForm();
+@@ -346,7 +397,7 @@
+   try {
+     const result = await api(`/api/auth/${state.authMode === 'register' ? 'register' : 'login'}`, { method: 'POST', body });
+     state.csrfToken = result.csrfToken || null;
+-    state.user = result.user; $('#auth-error').textContent = ''; await loadBands(); await loadBandData(); render();
++    state.user = result.user; $('#auth-error').textContent = ''; $('#auth-info').textContent = ''; await loadBands(); await loadBandData(); render();
+   } catch (error) { $('#auth-error').textContent = error.message; }
+ });
+ 
+diff
+--- a/public/index.html	2026-11-19 00:23:24.298529661 +0000
++++ b/public/index.html	2026-11-20 00:31:20.108543010 +0000
+@@ -16,6 +16,7 @@
+         <button class="segment active" data-auth-mode="login">Entrar</button>
+         <button class="segment" data-auth-mode="register">Criar conta</button>
+       </div>
++      <p id="auth-info" class="success"></p>
+       <form id="auth-form" class="card form-stack">
+         <label id="nickname-field" class="hidden">Nickname<input name="nickname" autocomplete="nickname"></label>
+         <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
+@@ -23,6 +24,7 @@
+         <button class="primary" type="submit" id="auth-submit">Entrar</button>
+         <p id="auth-error" class="error"></p>
+       </form>
++      <p class="auth-links"><button type="button" class="link-button" id="forgot-password" data-action="forgot-password">Esqueci minha senha</button></p>
+     </section>
+ 
+     <section id="main-view" class="hidden">
+diff
+--- a/public/styles.css	2026-11-19 00:24:15.754905265 +0000
++++ b/public/styles.css	2026-11-20 00:31:20.108697548 +0000
+@@ -16,6 +16,9 @@
+ button, input, select, textarea { font: inherit; }
+ button { cursor: pointer; border: 0; }
+ .hidden { display: none !important; }
++.auth-links { text-align: center; margin: 6px 0 0; }
++.link-button { background: transparent; color: var(--primary-dark); font-size: 14px; font-weight: 700; padding: 10px 6px; text-decoration: underline; }
++#auth-info:not(:empty) { margin: 0 0 12px; }
+ .file-link { color: var(--primary-dark); font-weight: 600; text-decoration: none; word-break: break-all; }
+ .file-link:hover { text-decoration: underline; }
+ .file-current { display: grid; gap: 6px; font-size: 14px; }
+diff
+--- a/src/authHttp.js	2026-11-19 00:23:24.298711633 +0000
++++ b/src/authHttp.js	2026-11-20 00:31:20.108358465 +0000
+@@ -2,7 +2,16 @@
+ const express = require('express');
+ const path = require('path');
+ const { rateLimit } = require('express-rate-limit');
+-const { SESSION_TTL_MS, createUser, verifyPassword } = require('./authService');
++const { SESSION_TTL_MS, createUser, verifyPassword, hashPassword } = require('./authService');
++const {
++  RESET_TOKEN_TTL_MS,
++  RESET_TOKEN_PATTERN,
++  hashResetToken,
++  generateResetToken,
++  buildResetLink,
++  buildResetEmail
++} = require('./passwordReset');
++const { createConsoleMailer } = require('./mailer');
+ const { createError, sendError } = require('./httpErrors');
+ const { normalizeNickname, validateNickname } = require('./nickname');
+ const { DuplicateError } = require('./repositories/errors');
+@@ -18,6 +27,8 @@
+ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+ const RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS = 20;
+ const SESSION_CHECK_MAX_ATTEMPTS = 30;
++const RESET_REQUEST_MAX_PER_EMAIL = 3;
++const RESET_IP_MAX_ATTEMPTS = 20;
+ 
+ function normalizeEmail(email) {
+   return String(email || '').trim().toLowerCase();
+@@ -131,7 +142,8 @@
+     musicRepository,
+     setlistRepository,
+     masteryRepository,
+-    sessionRepository
++    sessionRepository,
++    passwordResetRepository
+   } = resolveRepositories(options);
+   const activeSessionRepository = options.sessionsById
+     ? {
+@@ -154,11 +166,21 @@
+       },
+       async delete(id) {
+         options.sessionsById.delete(id);
++      },
++      async deleteByUserId(userId) {
++        for (const [id, current] of options.sessionsById.entries()) {
++          if (current.userId === userId) {
++            options.sessionsById.delete(id);
++          }
++        }
+       }
+     }
+     : sessionRepository;
+   const failedLogins = options.failedLogins || new Map();
+   const failedSessionChecks = options.failedSessionChecks || new Map();
++  const resetRequests = options.resetRequests || new Map();
++  const mailer = options.mailer || createConsoleMailer();
++  const appBaseUrl = options.appBaseUrl || process.env.APP_BASE_URL || 'http://localhost:3000';
+ 
+   const now = options.now || (() => Date.now());
+   const isProduction = options.isProduction !== undefined
+@@ -182,6 +204,19 @@
+     }
+   });
+ 
++  const createResetIpRateLimiter = () => rateLimit({
++    windowMs: RATE_LIMIT_WINDOW_MS,
++    limit: RESET_IP_MAX_ATTEMPTS,
++    standardHeaders: false,
++    legacyHeaders: false,
++    keyGenerator: (request) => getClientIp(request),
++    handler: (request, response) => {
++      sendError(response, 429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
++    }
++  });
++  const resetRequestIpRateLimiter = createResetIpRateLimiter();
++  const resetConfirmIpRateLimiter = createResetIpRateLimiter();
++
+   app.disable('x-powered-by');
+   app.use(express.json({ limit: '16kb' }));
+   app.use(express.static(path.join(__dirname, '..', 'public')));
+@@ -422,6 +457,98 @@
+     } catch (error) {
+       next(error);
+     }
++  });
++
++  // ---- Redefinição de senha ("Esqueci minha senha")
++  const RESET_REQUEST_MESSAGE = 'Se o e-mail estiver cadastrado, enviaremos um link para redefinir a senha.';
++  const invalidResetToken = () => createError(400, 'INVALID_RESET_TOKEN', 'Link inválido ou expirado. Solicite um novo.');
++
++  async function sendPasswordResetEmail(email) {
++    const user = await userRepository.findByEmail(email);
++    if (!user || user.status !== 'active') {
++      return;
++    }
++
++    const { token, tokenHash } = generateResetToken();
++    const timestamp = now();
++    await passwordResetRepository.replaceForUser({
++      tokenHash,
++      userId: user.id,
++      createdAt: new Date(timestamp).toISOString(),
++      expiresAt: new Date(timestamp + RESET_TOKEN_TTL_MS).toISOString()
++    });
++    await mailer.send({
++      to: user.email,
++      ...buildResetEmail({ link: buildResetLink(appBaseUrl, token), ttlMinutes: RESET_TOKEN_TTL_MS / 60000 })
++    });
++  }
++
++  app.post('/api/auth/password-reset/request', resetRequestIpRateLimiter, async (request, response, next) => {
++    try {
++      const body = request.body;
++      if (!body || typeof body !== 'object') {
++        throw createError(400, 'VALIDATION_ERROR', 'Payload JSON obrigatório.');
++      }
++
++      const email = normalizeEmail(body.email);
++      if (!isValidEmail(email)) {
++        throw createError(400, 'VALIDATION_ERROR', 'E-mail inválido.');
++      }
++
++      const rateLimitKey = getRateLimitKey(request, email);
++      if (isRateLimited(resetRequests, rateLimitKey, RESET_REQUEST_MAX_PER_EMAIL)) {
++        throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
++      }
++      registerFailedAttempt(resetRequests, rateLimitKey);
++
++      // Resposta idêntica exista ou não o e-mail (sem enumeração de contas); o trabalho
++      // roda depois de responder para o tempo de resposta também não revelar nada.
++      response.status(202).json({ message: RESET_REQUEST_MESSAGE });
++      sendPasswordResetEmail(email).catch((error) => {
++        process.stderr.write(`Falha ao processar redefinição de senha: ${error.message}\n`);
++      });
++    } catch (error) {
++      next(error);
++    }
++  });
++
++  app.post('/api/auth/password-reset/confirm', resetConfirmIpRateLimiter, async (request, response, next) => {
++    try {
++      const body = request.body;
++      if (!body || typeof body !== 'object') {
++        throw createError(400, 'VALIDATION_ERROR', 'Payload JSON obrigatório.');
++      }
++
++      const { token, password } = body;
++      if (typeof token !== 'string' || !RESET_TOKEN_PATTERN.test(token)) {
++        throw invalidResetToken();
++      }
++
++      // A senha é validada antes de consumir o token: senha fraca não "queima" o link.
++      const passwordError = validatePassword(password);
++      if (passwordError) {
++        throw createError(400, 'VALIDATION_ERROR', passwordError);
++      }
++
++      const userId = await passwordResetRepository.consume(hashResetToken(token), new Date(now()).toISOString());
++      const user = userId ? await userRepository.findById(userId) : null;
++      if (!user || user.status !== 'active') {
++        throw invalidResetToken();
++      }
++
++      const { salt, hash } = hashPassword(password);
++      await userRepository.updatePassword(user.id, { passwordHash: hash, passwordSalt: salt });
++      await activeSessionRepository.deleteByUserId(user.id);
++      for (const key of Array.from(failedLogins.keys())) {
++        if (key.endsWith(`|${user.email}`)) {
++          failedLogins.delete(key);
++        }
++      }
++
++      response.status(200).json({ success: true });
++    } catch (error) {
++      next(error);
++    }
+   });
+ 
+   app.post('/api/auth/logout', async (request, response) => {
+diff
+--- a/src/db.js	2026-11-19 00:23:24.298968302 +0000
++++ b/src/db.js	2026-11-20 00:31:20.107072744 +0000
+@@ -65,7 +65,8 @@
+     'setlists',
+     'setlist_items',
+     'music_mastery',
+-    'sessions'
++    'sessions',
++    'password_reset_tokens'
+   ];
+   const columns = expectedTables
+     .map((table) => `to_regclass('${table}') AS ${table}`)
+diff
+--- a/src/mailer.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/mailer.js	2026-11-20 00:30:07.149294475 +0000
+@@ -0,0 +1,14 @@
++// Envio de e-mail. O padrão é o "console mailer": escreve a mensagem no log do servidor
++// (docker compose logs app), útil em desenvolvimento e na demonstração do projeto.
++// Para enviar e-mail de verdade, passe outro objeto { send({ to, subject, text }) } em
++// createAuthApp({ mailer }) — por exemplo, um adaptador SMTP ou de um provedor de e-mail.
++function createConsoleMailer(write = (text) => process.stdout.write(text)) {
++  return {
++    async send({ to, subject, text }) {
++      const lines = [`Para: ${to}`, `Assunto: ${subject}`, '', ...String(text).split('\n')];
++      write(`\n[SetFlow e-mail]\n${lines.map((line) => `  ${line}`).join('\n')}\n\n`);
++    }
++  };
++}
++
++module.exports = { createConsoleMailer };
+diff
+--- a/src/passwordReset.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/passwordReset.js	2026-11-20 00:30:07.149268341 +0000
+@@ -0,0 +1,44 @@
++// Redefinição de senha: token aleatório de 256 bits, validade curta, uso único.
++// O token em texto claro só existe no link enviado ao usuário; o banco guarda o hash.
++const crypto = require('crypto');
++
++const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
++const RESET_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
++
++function hashResetToken(token) {
++  return crypto.createHash('sha256').update(String(token)).digest('hex');
++}
++
++function generateResetToken() {
++  const token = crypto.randomBytes(32).toString('hex');
++  return { token, tokenHash: hashResetToken(token) };
++}
++
++// O token vai no fragmento (#), que o navegador não envia ao servidor nem em Referer,
++// evitando que ele apareça em logs de acesso.
++function buildResetLink(baseUrl, token) {
++  return `${String(baseUrl).replace(/\/+$/, '')}/#reset=${token}`;
++}
++
++function buildResetEmail({ link, ttlMinutes }) {
++  return {
++    subject: 'SetFlow — redefinição de senha',
++    text: [
++      'Recebemos um pedido para redefinir a senha da sua conta no SetFlow.',
++      '',
++      `Abra o link abaixo para criar uma nova senha (válido por ${ttlMinutes} minutos e de uso único):`,
++      link,
++      '',
++      'Se você não fez esse pedido, ignore esta mensagem: sua senha continua a mesma.'
++    ].join('\n')
++  };
++}
++
++module.exports = {
++  RESET_TOKEN_TTL_MS,
++  RESET_TOKEN_PATTERN,
++  hashResetToken,
++  generateResetToken,
++  buildResetLink,
++  buildResetEmail
++};
+diff
+--- a/src/repositories/memoryRepositories.js	2026-11-19 00:23:24.299375019 +0000
++++ b/src/repositories/memoryRepositories.js	2026-11-20 00:31:20.107559541 +0000
+@@ -45,6 +45,17 @@
+       usersByEmail.set(user.email, user);
+       usersById.set(user.id, user);
+       return user;
++    },
++
++    async updatePassword(userId, { passwordHash, passwordSalt }) {
++      const user = usersById.get(userId);
++      if (!user) {
++        return null;
++      }
++
++      user.passwordHash = passwordHash;
++      user.passwordSalt = passwordSalt;
++      return user;
+     }
+   };
+ 
+@@ -304,6 +315,38 @@
+ 
+     async delete(id) {
+       sessions.delete(id);
++    },
++
++    async deleteByUserId(userId) {
++      for (const [id, current] of sessions.entries()) {
++        if (current.userId === userId) {
++          sessions.delete(id);
++        }
++      }
++    }
++  };
++
++  // Redefinição de senha: só o hash do token é guardado; cada usuário tem um token ativo.
++  const passwordResets = new Map();
++  const passwordResetRepository = {
++    async replaceForUser({ tokenHash, userId, createdAt, expiresAt }) {
++      for (const [hash, record] of passwordResets.entries()) {
++        if (record.userId === userId) {
++          passwordResets.delete(hash);
++        }
++      }
++      passwordResets.set(tokenHash, { userId, createdAt, expiresAt, usedAt: null });
++    },
++
++    // Marca o token como usado e devolve o userId; null se inexistente, usado ou expirado.
++    async consume(tokenHash, nowIso) {
++      const record = passwordResets.get(tokenHash);
++      if (!record || record.usedAt || new Date(record.expiresAt).getTime() <= new Date(nowIso).getTime()) {
++        return null;
++      }
++
++      record.usedAt = nowIso;
++      return record.userId;
+     }
+   };
+ 
+@@ -313,7 +356,8 @@
+     musicRepository,
+     setlistRepository,
+     masteryRepository,
+-    sessionRepository
++    sessionRepository,
++    passwordResetRepository
+   };
+ }
+ 
+diff
+--- a/src/repositories/pgRepositories.js	2026-11-19 00:23:24.344807812 +0000
++++ b/src/repositories/pgRepositories.js	2026-11-20 00:31:20.107989707 +0000
+@@ -166,6 +166,16 @@
+           throw error;
+         }
+       });
++    },
++
++    updatePassword(userId, { passwordHash, passwordSalt }) {
++      return guarded(async () => {
++        const { rows } = await pool.query(
++          `UPDATE users SET password_hash = $2, password_salt = $3 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
++          [userId, passwordHash, passwordSalt]
++        );
++        return mapUser(rows[0]);
++      });
+     }
+   };
+ 
+@@ -645,6 +655,40 @@
+       return guarded(async () => {
+         await pool.query('DELETE FROM sessions WHERE id = $1', [id]);
+       });
++    },
++
++    deleteByUserId(userId) {
++      return guarded(async () => {
++        await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
++      });
++    }
++  };
++
++  // Redefinição de senha: só o hash do token é guardado; cada usuário tem um token ativo.
++  const passwordResetRepository = {
++    replaceForUser({ tokenHash, userId, createdAt, expiresAt }) {
++      return guarded(async () => {
++        await pool.query(
++          'DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < $2::timestamptz',
++          [userId, createdAt]
++        );
++        await pool.query(
++          'INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)',
++          [tokenHash, userId, createdAt, expiresAt]
++        );
++      });
++    },
++
++    // Atômico: o UPDATE condicional garante uso único mesmo com requisições simultâneas.
++    consume(tokenHash, nowIso) {
++      return guarded(async () => {
++        const { rows } = await pool.query(
++          'UPDATE password_reset_tokens SET used_at = $2::timestamptz '
++          + 'WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2::timestamptz RETURNING user_id',
++          [tokenHash, nowIso]
++        );
++        return rows[0] ? rows[0].user_id : null;
++      });
+     }
+   };
+ 
+@@ -654,7 +698,8 @@
+     musicRepository,
+     setlistRepository,
+     masteryRepository,
+-    sessionRepository
++    sessionRepository,
++    passwordResetRepository
+   };
+ }
+ 
+diff
+--- a/src/tests/frontend.test.js	2026-11-19 00:23:24.299980438 +0000
++++ b/src/tests/frontend.test.js	2026-11-20 00:31:29.461290514 +0000
+@@ -8,6 +8,8 @@
+     const page = await request({ port, method: 'GET', path: '/' });
+     assert.strictEqual(page.status, 200);
+     assert.match(page.body, /SetFlow/);
++    assert.match(page.body, /Esqueci minha senha/);
++    assert.match(page.body, /data-action="forgot-password"/);
+ 
+     const stylesheet = await request({ port, method: 'GET', path: '/styles.css' });
+     assert.strictEqual(stylesheet.status, 200);
+@@ -19,6 +21,8 @@
+     assert.match(script.body, /\/sugestao`, \{ method: 'POST' \}/);
+     assert.match(script.body, /name="cifra" type="file"/);
+     assert.doesNotMatch(script.body, /name="cifraAnexo"/);
++    assert.match(script.body, /\/api\/auth\/password-reset\/request/);
++    assert.match(script.body, /\/api\/auth\/password-reset\/confirm/);
+     const submit = script.body.slice(script.body.indexOf("$('#auth-form').addEventListener"));
+     const csrfAt = submit.indexOf('state.csrfToken = result.csrfToken');
+     assert.ok(csrfAt >= 0 && csrfAt < submit.indexOf('await loadBands()'), 'CSRF deve ser guardado antes de loadBands()');
+diff
+--- a/src/tests/passwordReset.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/passwordReset.test.js	2026-11-20 00:31:29.460355147 +0000
+@@ -0,0 +1,120 @@
++const assert = require('assert');
++const { createAuthApp, request, extractCookieValue, withServer } = require('./httpTestUtils');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++const { RESET_TOKEN_TTL_MS } = require('../passwordReset');
++
++console.log('🧪 Iniciando testes HTTP da redefinição de senha...\n');
++
++const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
++
++async function waitFor(predicate, label) {
++  for (let attempt = 0; attempt < 100; attempt += 1) {
++    if (predicate()) {
++      return;
++    }
++    await wait(10);
++  }
++  throw new Error(`Tempo esgotado esperando: ${label}`);
++}
++
++(async function main() {
++  const outbox = [];
++  let clock = Date.parse('2026-11-19T12:00:00Z');
++  const app = createAuthApp({
++    repositories: createMemoryRepositories(),
++    isProduction: false,
++    now: () => clock,
++    appBaseUrl: 'http://app.test/',
++    mailer: { async send(message) { outbox.push(message); } }
++  });
++
++  await withServer(app, async ({ port }) => {
++    const call = (method, path, body, cookie) => request({ port, method, path, body, headers: cookie ? { Cookie: cookie } : {} });
++    const requestReset = (email) => call('POST', '/api/auth/password-reset/request', { email });
++    const confirmReset = (token, password) => call('POST', '/api/auth/password-reset/confirm', { token, password });
++    const tokenFrom = (message) => {
++      const match = message.text.match(/http:\/\/app\.test\/#reset=([0-9a-f]{64})/);
++      assert.ok(match, 'e-mail deve conter o link com o token no fragmento');
++      return match[1];
++    };
++
++    async function signUp(nickname, password = 'senha1234') {
++      const response = await call('POST', '/api/auth/register', { nickname, email: `${nickname}@teste.com`, password });
++      assert.strictEqual(response.status, 201);
++      return extractCookieValue(response.headers['set-cookie'], 'setflow_session');
++    }
++
++    const anaCookie = await signUp('ana');
++
++    // ---- sem enumeração de contas
++    const unknown = await requestReset('ninguem@teste.com');
++    const known = await requestReset('ana@teste.com');
++    assert.strictEqual(unknown.status, 202);
++    assert.strictEqual(known.status, 202);
++    assert.deepStrictEqual(unknown.json, known.json);
++    await waitFor(() => outbox.length === 1, 'e-mail da ana');
++    assert.strictEqual(outbox[0].to, 'ana@teste.com');
++    assert.ok(!known.body.includes(tokenFrom(outbox[0])), 'a resposta da API nunca traz o token');
++    assert.strictEqual((await requestReset('formato-invalido')).status, 400);
++    console.log('✅ Pedido responde 202 igual para e-mail existente e inexistente; só a conta real recebe o link.');
++
++    // ---- novo pedido invalida o anterior
++    const token1 = tokenFrom(outbox[0]);
++    await requestReset('ana@teste.com');
++    await waitFor(() => outbox.length === 2, 'segundo e-mail');
++    const token2 = tokenFrom(outbox[1]);
++    assert.notStrictEqual(token1, token2);
++    const stale = await confirmReset(token1, 'novaSenha123');
++    assert.strictEqual(stale.status, 400);
++    assert.strictEqual(stale.json.error.code, 'INVALID_RESET_TOKEN');
++    console.log('✅ Um novo pedido invalida o link anterior.');
++
++    // ---- validações não queimam o token
++    assert.strictEqual((await confirmReset('abc', 'novaSenha123')).json.error.code, 'INVALID_RESET_TOKEN');
++    const weak = await confirmReset(token2, '123');
++    assert.strictEqual(weak.status, 400);
++    assert.strictEqual(weak.json.error.code, 'VALIDATION_ERROR');
++    console.log('✅ Token malformado é recusado e senha fraca não consome o link.');
++
++    // ---- redefinição
++    const done = await confirmReset(token2, 'novaSenha123');
++    assert.strictEqual(done.status, 200);
++    assert.strictEqual((await call('GET', '/api/auth/me', undefined, anaCookie)).status, 401, 'sessões antigas são encerradas');
++    assert.strictEqual((await call('POST', '/api/auth/login', { email: 'ana@teste.com', password: 'senha1234' })).status, 401);
++    const login = await call('POST', '/api/auth/login', { email: 'ana@teste.com', password: 'novaSenha123' });
++    assert.strictEqual(login.status, 200);
++    console.log('✅ Redefinir troca a senha, encerra sessões antigas e permite entrar com a nova.');
++
++    // ---- uso único
++    const reuse = await confirmReset(token2, 'outraSenha123');
++    assert.strictEqual(reuse.status, 400);
++    assert.strictEqual(reuse.json.error.code, 'INVALID_RESET_TOKEN');
++    assert.strictEqual((await call('POST', '/api/auth/login', { email: 'ana@teste.com', password: 'novaSenha123' })).status, 200);
++    console.log('✅ O link só funciona uma vez.');
++
++    // ---- expiração
++    await requestReset('ana@teste.com');
++    await waitFor(() => outbox.length === 3, 'terceiro e-mail');
++    const token3 = tokenFrom(outbox[2]);
++    clock += RESET_TOKEN_TTL_MS + 1000;
++    const expired = await confirmReset(token3, 'senhaExpirada123');
++    assert.strictEqual(expired.status, 400);
++    assert.strictEqual(expired.json.error.code, 'INVALID_RESET_TOKEN');
++    console.log('✅ Link expira em 30 minutos.');
++
++    // ---- limite de pedidos por IP + e-mail
++    await signUp('bia');
++    for (let attempt = 1; attempt <= 3; attempt += 1) {
++      assert.strictEqual((await requestReset('bia@teste.com')).status, 202);
++    }
++    const limited = await requestReset('bia@teste.com');
++    assert.strictEqual(limited.status, 429);
++    assert.strictEqual(limited.json.error.code, 'RATE_LIMIT_EXCEEDED');
++    console.log('✅ O 4º pedido para o mesmo e-mail na janela de 15 minutos retorna 429.');
++  });
++
++  console.log('\n🎉 Todos os testes HTTP da redefinição de senha passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff
+--- a/src/tests/passwordResetUnit.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/passwordResetUnit.test.js	2026-11-20 00:31:29.460317106 +0000
+@@ -0,0 +1,76 @@
++const assert = require('assert');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++const { createConsoleMailer } = require('../mailer');
++const {
++  RESET_TOKEN_TTL_MS,
++  RESET_TOKEN_PATTERN,
++  hashResetToken,
++  generateResetToken,
++  buildResetLink,
++  buildResetEmail
++} = require('../passwordReset');
++
++console.log('🧪 Iniciando testes da redefinição de senha (unitários)...\n');
++
++(async function main() {
++  // Token: aleatório, 256 bits, só o hash é derivado dele
++  const first = generateResetToken();
++  const second = generateResetToken();
++  assert.ok(RESET_TOKEN_PATTERN.test(first.token));
++  assert.notStrictEqual(first.token, second.token);
++  assert.strictEqual(first.tokenHash, hashResetToken(first.token));
++  assert.notStrictEqual(first.tokenHash, first.token);
++  assert.ok(!RESET_TOKEN_PATTERN.test('abc') && !RESET_TOKEN_PATTERN.test(`${first.token}0`) && !RESET_TOKEN_PATTERN.test(first.token.toUpperCase()));
++  assert.strictEqual(RESET_TOKEN_TTL_MS, 30 * 60 * 1000);
++  console.log('✅ Token de 256 bits, hash SHA-256 e formato validado.');
++
++  // Link e e-mail
++  assert.strictEqual(buildResetLink('http://app.test/', first.token), `http://app.test/#reset=${first.token}`);
++  assert.strictEqual(buildResetLink('http://app.test', first.token), `http://app.test/#reset=${first.token}`);
++  const email = buildResetEmail({ link: 'http://app.test/#reset=x', ttlMinutes: 30 });
++  assert.ok(email.text.includes('http://app.test/#reset=x') && email.text.includes('30 minutos'));
++  console.log('✅ Link usa fragmento (#) e e-mail traz o prazo de validade.');
++
++  // Mailer de console
++  let written = '';
++  await createConsoleMailer((text) => { written += text; }).send({ to: 'a@b.com', subject: 'Assunto', text: 'linha 1\nlinha 2' });
++  assert.ok(written.includes('Para: a@b.com') && written.includes('Assunto: Assunto') && written.includes('linha 2'));
++  console.log('✅ Mailer de console escreve destinatário, assunto e corpo.');
++
++  // Repositório em memória: substituição, uso único, expiração, usuário e sessões
++  const { passwordResetRepository: resets, userRepository, sessionRepository } = createMemoryRepositories();
++  const iso = (ms) => new Date(ms).toISOString();
++  const t0 = Date.parse('2026-11-19T12:00:00Z');
++
++  await resets.replaceForUser({ tokenHash: 'h1', userId: 'u1', createdAt: iso(t0), expiresAt: iso(t0 + RESET_TOKEN_TTL_MS) });
++  await resets.replaceForUser({ tokenHash: 'h2', userId: 'u1', createdAt: iso(t0), expiresAt: iso(t0 + RESET_TOKEN_TTL_MS) });
++  assert.strictEqual(await resets.consume('h1', iso(t0)), null, 'novo pedido invalida o anterior');
++  assert.strictEqual(await resets.consume('h2', iso(t0 + 1000)), 'u1');
++  assert.strictEqual(await resets.consume('h2', iso(t0 + 2000)), null, 'uso único');
++
++  await resets.replaceForUser({ tokenHash: 'h3', userId: 'u2', createdAt: iso(t0), expiresAt: iso(t0 + RESET_TOKEN_TTL_MS) });
++  assert.strictEqual(await resets.consume('h3', iso(t0 + RESET_TOKEN_TTL_MS)), null, 'expira exatamente no prazo');
++  await resets.replaceForUser({ tokenHash: 'h4', userId: 'u3', createdAt: iso(t0), expiresAt: iso(t0 + RESET_TOKEN_TTL_MS) });
++  assert.strictEqual(await resets.consume('h4', iso(t0 + RESET_TOKEN_TTL_MS - 1)), 'u3');
++  assert.strictEqual(await resets.consume('inexistente', iso(t0)), null);
++  console.log('✅ Repositório: um token ativo por usuário, uso único e expiração.');
++
++  const user = { id: 'u1', email: 'a@b.com', passwordHash: 'old', passwordSalt: 'olds', status: 'active' };
++  await userRepository.create(user);
++  const updated = await userRepository.updatePassword('u1', { passwordHash: 'new', passwordSalt: 'news' });
++  assert.strictEqual(updated.passwordHash, 'new');
++  assert.strictEqual((await userRepository.findByEmail('a@b.com')).passwordSalt, 'news');
++  assert.strictEqual(await userRepository.updatePassword('nope', { passwordHash: 'x', passwordSalt: 'y' }), null);
++
++  await sessionRepository.create({ id: 's1', userId: 'u1', csrfToken: 'c', activeBandId: null, createdAt: iso(t0), expiresAt: iso(t0 + 1000) });
++  await sessionRepository.create({ id: 's2', userId: 'u9', csrfToken: 'c', activeBandId: null, createdAt: iso(t0), expiresAt: iso(t0 + 1000) });
++  await sessionRepository.deleteByUserId('u1');
++  assert.strictEqual(await sessionRepository.findById('s1'), null);
++  assert.ok(await sessionRepository.findById('s2'));
++  console.log('✅ Troca de senha e encerramento das sessões do usuário.');
++
++  console.log('\n🎉 Todos os testes unitários da redefinição de senha passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff
+--- a/src/tests/pgRepositories.test.js	2026-11-19 00:23:41.193356248 +0000
++++ b/src/tests/pgRepositories.test.js	2026-11-20 00:31:29.461553022 +0000
+@@ -292,6 +292,37 @@
+     console.log('✅ Repositório PG mapeia metadados da cifra e grava/lê o arquivo como bytea.');
+   }
+ 
++  // 7d. Redefinição de senha: token de uso único (UPDATE condicional) e troca de senha
++  {
++    const queries = [];
++    const pool = {
++      async query(text, params) {
++        queries.push({ text: String(text), params });
++        if (String(text).startsWith('UPDATE password_reset_tokens')) {
++          return { rows: [{ user_id: 'u-1' }] };
++        }
++        if (String(text).startsWith('UPDATE users')) {
++          return { rows: [{ id: 'u-1', nickname: 'n', email: 'a@b.com', password_hash: 'h2', password_salt: 's2', status: 'active' }] };
++        }
++        return { rows: [] };
++      }
++    };
++    const { passwordResetRepository, userRepository, sessionRepository } = createPgRepositories(pool, { logger: silent });
++    await passwordResetRepository.replaceForUser({
++      tokenHash: 'th', userId: 'u-1', createdAt: '2026-11-19T12:00:00.000Z', expiresAt: '2026-11-19T12:30:00.000Z'
++    });
++    assert.ok(queries[0].text.startsWith('DELETE FROM password_reset_tokens') && queries[0].params[0] === 'u-1');
++    assert.ok(queries[1].text.startsWith('INSERT INTO password_reset_tokens') && queries[1].params[0] === 'th');
++    assert.strictEqual(await passwordResetRepository.consume('th', '2026-11-19T12:01:00.000Z'), 'u-1');
++    assert.ok(queries[2].text.includes('used_at IS NULL') && queries[2].text.includes('expires_at > $2'));
++    const updated = await userRepository.updatePassword('u-1', { passwordHash: 'h2', passwordSalt: 's2' });
++    assert.strictEqual(updated.passwordHash, 'h2');
++    assert.deepStrictEqual(queries[3].params, ['u-1', 'h2', 's2']);
++    await sessionRepository.deleteByUserId('u-1');
++    assert.strictEqual(queries[queries.length - 1].text, 'DELETE FROM sessions WHERE user_id = $1');
++    console.log('✅ Repositório PG: token de uso único atômico, troca de senha e limpeza de sessões.');
++  }
++
+   // 8. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
+   {
+     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'setflow-mig-'));

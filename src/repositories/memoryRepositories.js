@@ -45,6 +45,17 @@ function createMemoryRepositories(options = {}) {
       usersByEmail.set(user.email, user);
       usersById.set(user.id, user);
       return user;
+    },
+
+    async updatePassword(userId, { passwordHash, passwordSalt }) {
+      const user = usersById.get(userId);
+      if (!user) {
+        return null;
+      }
+
+      user.passwordHash = passwordHash;
+      user.passwordSalt = passwordSalt;
+      return user;
     }
   };
 
@@ -141,24 +152,52 @@ function createMemoryRepositories(options = {}) {
     }
   };
 
+  const chordFiles = new Map();
+  const chordMeta = (file) => (file
+    ? { nome: file.nome, tipo: file.tipo, tamanhoBytes: file.tamanhoBytes }
+    : null);
+  const withChordFile = (song) => ({ ...song, cifraArquivo: chordMeta(chordFiles.get(song.id)) });
+
   const musicRepository = {
     async create(song) {
       music.set(song.id, song);
-      return song;
+      return withChordFile(song);
     },
 
     async listForBand(bandId) {
-      return Array.from(music.values()).filter((song) => song.bandaId === bandId);
+      return Array.from(music.values()).filter((song) => song.bandaId === bandId).map(withChordFile);
     },
 
     async findForBand(musicId, bandId) {
       const song = music.get(musicId);
-      return song && song.bandaId === bandId ? song : null;
+      return song && song.bandaId === bandId ? withChordFile(song) : null;
     },
 
     async update(song) {
       music.set(song.id, song);
-      return song;
+      return withChordFile(song);
+    },
+
+    async saveChordFile({ musicId, bandId, fileName, contentType, content }) {
+      const song = music.get(musicId);
+      if (!song || song.bandaId !== bandId) {
+        return null;
+      }
+
+      const file = { nome: fileName, tipo: contentType, tamanhoBytes: content.length, conteudo: Buffer.from(content) };
+      chordFiles.set(musicId, file);
+      return chordMeta(file);
+    },
+
+    async findChordFile(musicId, bandId) {
+      const song = music.get(musicId);
+      const file = song && song.bandaId === bandId ? chordFiles.get(musicId) : null;
+      return file ? { ...file } : null;
+    },
+
+    async deleteChordFile(musicId, bandId) {
+      const song = music.get(musicId);
+      return Boolean(song && song.bandaId === bandId && chordFiles.delete(musicId));
     }
   };
 
@@ -187,6 +226,16 @@ function createMemoryRepositories(options = {}) {
     async listConfirmedForBand(bandId) {
       return Array.from(setlists.values())
         .filter((setlist) => setlist.bandaId === bandId && setlist.estado === 'Confirmado')
+        .map((setlist) => ({
+          ...setlist,
+          musicas: (setlistItems.get(setlist.id) || []).map((item) => ({ ...item }))
+        }));
+    },
+
+    async listDraftsForBand(bandId) {
+      return Array.from(setlists.values())
+        .filter((setlist) => setlist.bandaId === bandId && setlist.estado === 'Rascunho')
+        .sort((a, b) => a.data.localeCompare(b.data) || a.id.localeCompare(b.id))
         .map((setlist) => ({
           ...setlist,
           musicas: (setlistItems.get(setlist.id) || []).map((item) => ({ ...item }))
@@ -266,6 +315,38 @@ function createMemoryRepositories(options = {}) {
 
     async delete(id) {
       sessions.delete(id);
+    },
+
+    async deleteByUserId(userId) {
+      for (const [id, current] of sessions.entries()) {
+        if (current.userId === userId) {
+          sessions.delete(id);
+        }
+      }
+    }
+  };
+
+  // Redefinição de senha: só o hash do token é guardado; cada usuário tem um token ativo.
+  const passwordResets = new Map();
+  const passwordResetRepository = {
+    async replaceForUser({ tokenHash, userId, createdAt, expiresAt }) {
+      for (const [hash, record] of passwordResets.entries()) {
+        if (record.userId === userId) {
+          passwordResets.delete(hash);
+        }
+      }
+      passwordResets.set(tokenHash, { userId, createdAt, expiresAt, usedAt: null });
+    },
+
+    // Marca o token como usado e devolve o userId; null se inexistente, usado ou expirado.
+    async consume(tokenHash, nowIso) {
+      const record = passwordResets.get(tokenHash);
+      if (!record || record.usedAt || new Date(record.expiresAt).getTime() <= new Date(nowIso).getTime()) {
+        return null;
+      }
+
+      record.usedAt = nowIso;
+      return record.userId;
     }
   };
 
@@ -275,7 +356,8 @@ function createMemoryRepositories(options = {}) {
     musicRepository,
     setlistRepository,
     masteryRepository,
-    sessionRepository
+    sessionRepository,
+    passwordResetRepository
   };
 }
 

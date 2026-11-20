@@ -1,0 +1,263 @@
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/public/app.js SetFlow-patched/public/app.js
+--- a/public/app.js	2026-11-13 23:37:26.000000000 +0000
++++ b/public/app.js	2026-11-18 23:16:13.783045806 +0000
+@@ -4,6 +4,7 @@
+   band: null,
+   music: [],
+   setlists: [],
++  drafts: [],
+   history: [],
+   screen: 'home',
+   authMode: 'login',
+@@ -65,14 +66,17 @@
+ async function loadBandData() {
+   if (!state.band) return;
+   const id = state.band.id;
+-  const [music, setlists, history] = await Promise.all([
++  const isLeader = state.band.role === 'leader';
++  const [music, setlists, history, drafts] = await Promise.all([
+     api(`/api/bandas/${id}/musicas`),
+     api(`/api/bandas/${id}/setlists-confirmados`),
+-    state.band.role === 'leader' ? api(`/api/bandas/${id}/historico`) : Promise.resolve({ historico: [] })
++    isLeader ? api(`/api/bandas/${id}/historico`) : Promise.resolve({ historico: [] }),
++    isLeader ? api(`/api/bandas/${id}/setlists`) : Promise.resolve({ setlists: [] })
+   ]);
+   state.music = music.music;
+   state.setlists = setlists.setlists;
+   state.history = history.historico;
++  state.drafts = drafts.setlists;
+ }
+ 
+ function render() {
+@@ -120,11 +124,14 @@
+ }
+ 
+ function renderSetlists() {
++  const drafts = state.band.role === 'leader' && state.drafts.length
++    ? `<div class="toolbar" style="margin-top:12px"><div><h2>Rascunhos</h2><small class="muted">Toque para ordenar e confirmar</small></div></div><div class="grid">${state.drafts.map((setlist) => setlistCard(setlist, `data-open-draft="${setlist.id}"`)).join('')}</div>`
++    : '';
+   const leaderAction = state.band.role === 'leader' ? '<button class="primary" data-action="new-setlist">+ Setlist</button>' : '';
+   $('#content').innerHTML = `
+     <div class="toolbar"><div><h2>Setlists</h2><small class="muted">Confirmados disponíveis para a banda</small></div>${leaderAction}</div>
+     <div class="grid">${state.setlists.map((setlist) => setlistCard(setlist, `data-open-setlist="${setlist.id}"`)).join('') || '<div class="card empty">Nenhum setlist confirmado ainda.</div>'}</div>
+-    ${state.band.role === 'leader' ? '<div class="card" style="margin-top:12px"><small class="muted">Setlists em rascunho são acessados pelo fluxo de criação do líder.</small></div>' : ''}`;
++    ${drafts}`;
+ }
+ 
+ function renderHistory() {
+@@ -177,30 +184,50 @@
+   formModal('Novo setlist', `<label>Nome<input name="nome" required></label><label>Data<input name="data" type="date" required></label><label>Tempo disponível (segundos)<input name="tempo" type="number" min="1" value="3600" required></label><div class="card form-stack"><strong>Selecione as músicas</strong>${choices || '<small class="muted">Cadastre músicas primeiro.</small>'}</div>`, async (form) => {
+     const musicaIds = form.getAll('music');
+     const result = await api(`/api/bandas/${state.band.id}/setlists`, { method: 'POST', body: { nome: form.get('nome'), data: form.get('data'), tempoDisponivelSegundos: Number(form.get('tempo')), musicaIds } });
+-    await openDraft(result.setlist.id);
++    await loadBandData(); render();
++    await openDraft(result.setlist);
+   });
+ }
+ 
+-async function openDraft(id) {
+-  const draft = await api(`/api/bandas/${state.band.id}/setlists/${id}/sugestao`).catch(() => null);
+-  const setlist = draft?.setlist || null;
+-  if (!setlist) { showToast('Setlist criado. Gere a sugestão na tela de edição.', true); return; }
+-  const suggested = draft.sugestao;
+-  const modal = showModal(setlist.nome, `<div id="draft-body"></div>`);
++async function openDraft(setlist) {
++  if (!setlist) return;
++  const base = `/api/bandas/${state.band.id}/setlists/${setlist.id}`;
++  const detalhar = (musicaId) => ({ ...(state.music.find((song) => song.id === musicaId) || {}), musicaId });
++  let items = [...setlist.musicas].sort((a, b) => a.ordem - b.ordem).map((item) => detalhar(item.musicaId));
++  const duracaoTotalSegundos = items.reduce((total, item) => total + Number(item.duracaoSegundos || 0), 0);
++  let info = {
++    duracaoTotalSegundos,
++    alertaTempoExcedido: duracaoTotalSegundos > Number(setlist.tempoDisponivelSegundos || Infinity)
++  };
++  const modal = showModal(escapeHtml(setlist.nome), '<div id="draft-body"></div>');
+   const body = modal.querySelector('#draft-body');
+-  const renderDraft = (items) => {
+-    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(suggested.duracaoTotal)}</p>${suggested.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${item.tom} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div><div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>`;
+-    body.querySelectorAll('[data-move]').forEach((button) => button.addEventListener('click', async () => {
++  const run = async (task) => { try { await task(); } catch (error) { showToast(error.message, true); } };
++  const saveOrder = async () => {
++    const result = await api(`${base}/ordem`, { method: 'PUT', body: { musicaIds: items.map((item) => item.musicaId) } });
++    info = result.alerts;
++  };
++  const renderDraft = () => {
++    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(info.duracaoTotalSegundos)}</p>${info.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${escapeHtml(item.tom)} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div><div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>`;
++    body.querySelectorAll('[data-move]').forEach((button) => button.addEventListener('click', () => run(async () => {
+       const from = Number(button.dataset.move), to = from + Number(button.dataset.dir);
+       if (to < 0 || to >= items.length) return;
+       [items[from], items[to]] = [items[to], items[from]];
+-      await api(`/api/bandas/${state.band.id}/setlists/${id}/ordem`, { method: 'PUT', body: { musicaIds: items.map((item) => item.musicaId || item.id) } });
+-      renderDraft(items);
++      try { await saveOrder(); } catch (error) { [items[from], items[to]] = [items[to], items[from]]; throw error; }
++      renderDraft();
++    })));
++    body.querySelector('[data-draft-suggest]').addEventListener('click', () => run(async () => {
++      const result = await api(`${base}/sugestao`, { method: 'POST' });
++      items = result.sugestao.musicas.map((item) => detalhar(item.musicaId));
++      await saveOrder();
++      renderDraft();
++    }));
++    body.querySelector('[data-draft-confirm]').addEventListener('click', () => run(async () => {
++      await api(`${base}/confirmar`, { method: 'POST' });
++      modal.closest('.modal-backdrop').remove();
++      await loadBandData(); render(); showToast('Setlist confirmado.');
+     }));
+-    body.querySelector('[data-draft-suggest]').addEventListener('click', async () => { const result = await api(`/api/bandas/${state.band.id}/setlists/${id}/sugestao`); renderDraft(result.sugestao.musicas); });
+-    body.querySelector('[data-draft-confirm]').addEventListener('click', async () => { await api(`/api/bandas/${state.band.id}/setlists/${id}/confirmar`, { method: 'POST' }); modal.closest('.modal-backdrop').remove(); await loadBandData(); render(); showToast('Setlist confirmado.'); });
+   };
+-  renderDraft(suggested.musicas);
++  renderDraft();
+ }
+ 
+ async function openSetlist(id) {
+@@ -218,7 +245,7 @@
+     }
+     : await api(`/api/bandas/${state.band.id}/setlists/${id}/visualizacao`);
+   const leaderActions = state.band.role === 'leader' ? `<div class="actions" style="margin-top:14px">${setlist.estado === 'Confirmado' ? '<button class="secondary" data-reopen-setlist>Reabrir para editar</button><button class="primary" data-play-setlist>Marcar como tocado</button>' : ''}</div>` : '';
+-  const modal = showModal(setlist.nome, `<p class="muted">${dateLabel(setlist.data)} · ${setlist.estado}</p><div class="card">${result.setlist.musicas.map((song, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(song.titulo)}</strong><small class="track-meta">${song.tom} · ${song.bpm} BPM · ${formatDuration(song.duracaoSegundos)}</small><small class="track-meta">${escapeHtml(song.observacoes || 'Sem observações')} ${song.cifraAnexo ? `· ${escapeHtml(song.cifraAnexo)}` : ''}</small></div><select data-mastery="${song.id}"><option value="">Domínio</option>${['Não Sei','Preciso Revisar','Sei Bem'].map((level) => `<option ${song.nivelDominio === level ? 'selected' : ''}>${level}</option>`).join('')}</select></div>`).join('')}</div>${leaderActions}`);
++  const modal = showModal(escapeHtml(setlist.nome), `<p class="muted">${dateLabel(setlist.data)} · ${setlist.estado}</p><div class="card">${result.setlist.musicas.map((song, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(song.titulo)}</strong><small class="track-meta">${song.tom} · ${song.bpm} BPM · ${formatDuration(song.duracaoSegundos)}</small><small class="track-meta">${escapeHtml(song.observacoes || 'Sem observações')} ${song.cifraAnexo ? `· ${escapeHtml(song.cifraAnexo)}` : ''}</small></div><select data-mastery="${song.id}"><option value="">Domínio</option>${['Não Sei','Preciso Revisar','Sei Bem'].map((level) => `<option ${song.nivelDominio === level ? 'selected' : ''}>${level}</option>`).join('')}</select></div>`).join('')}</div>${leaderActions}`);
+   modal.querySelectorAll('[data-mastery]').forEach((select) => select.addEventListener('change', async () => {
+     if (!select.value) return;
+     await api(`/api/bandas/${state.band.id}/musicas/${select.dataset.mastery}/dominio`, { method: 'PUT', body: { nivel: select.value } });
+@@ -227,7 +254,8 @@
+   modal.querySelector('[data-reopen-setlist]')?.addEventListener('click', async () => {
+     await api(`/api/bandas/${state.band.id}/setlists/${id}/reabrir`, { method: 'POST' });
+     modal.closest('.modal-backdrop').remove();
+-    await openDraft(id);
++    await loadBandData(); render();
++    await openDraft(state.drafts.find((item) => item.id === id));
+   });
+   modal.querySelector('[data-play-setlist]')?.addEventListener('click', async () => {
+     await api(`/api/bandas/${state.band.id}/setlists/${id}/tocar`, { method: 'POST' });
+@@ -277,6 +305,8 @@
+   if (edit) openMusicForm(state.music.find((song) => song.id === edit.dataset.editMusic));
+   const open = event.target.closest('[data-open-setlist]');
+   if (open) await openSetlist(open.dataset.openSetlist);
++  const draft = event.target.closest('[data-open-draft]');
++  if (draft) await openDraft(state.drafts.find((item) => item.id === draft.dataset.openDraft));
+ });
+ 
+ $('#auth-form').addEventListener('submit', async (event) => {
+@@ -286,14 +316,14 @@
+   if (state.authMode === 'register') body.nickname = form.get('nickname');
+   try {
+     const result = await api(`/api/auth/${state.authMode === 'register' ? 'register' : 'login'}`, { method: 'POST', body });
+-    state.user = result.user; $('#auth-error').textContent = ''; await loadBands(); await loadBandData(); render();
+     state.csrfToken = result.csrfToken || null;
++    state.user = result.user; $('#auth-error').textContent = ''; await loadBands(); await loadBandData(); render();
+   } catch (error) { $('#auth-error').textContent = error.message; }
+ });
+ 
+ $('#logout-button').addEventListener('click', async () => {
+   await api('/api/auth/logout', { method: 'POST' });
+-  state.user = null; state.band = null; render();
++  state.user = null; state.band = null; state.csrfToken = null; state.drafts = []; render();
+ });
+ 
+ boot();
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/src/repositories/memoryRepositories.js SetFlow-patched/src/repositories/memoryRepositories.js
+--- a/src/repositories/memoryRepositories.js	2026-11-13 23:37:26.000000000 +0000
++++ b/src/repositories/memoryRepositories.js	2026-11-18 23:16:13.782061519 +0000
+@@ -193,6 +193,16 @@
+         }));
+     },
+ 
++    async listDraftsForBand(bandId) {
++      return Array.from(setlists.values())
++        .filter((setlist) => setlist.bandaId === bandId && setlist.estado === 'Rascunho')
++        .sort((a, b) => a.data.localeCompare(b.data) || a.id.localeCompare(b.id))
++        .map((setlist) => ({
++          ...setlist,
++          musicas: (setlistItems.get(setlist.id) || []).map((item) => ({ ...item }))
++        }));
++    },
++
+     async updateOrder(setlistId, bandId, items) {
+       const setlist = setlists.get(setlistId);
+       if (!setlist || setlist.bandaId !== bandId) {
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/src/repositories/pgRepositories.js SetFlow-patched/src/repositories/pgRepositories.js
+--- a/src/repositories/pgRepositories.js	2026-11-13 23:37:26.000000000 +0000
++++ b/src/repositories/pgRepositories.js	2026-11-18 23:16:13.782379384 +0000
+@@ -406,6 +406,29 @@
+       });
+     },
+ 
++    listDraftsForBand(bandId) {
++      return guarded(async () => {
++        const { rows } = await pool.query(
++          "SELECT id, band_id, name, event_date, available_seconds, state FROM setlists "
++          + "WHERE band_id = $1 AND state = 'Rascunho' ORDER BY event_date, id",
++          [bandId]
++        );
++        return Promise.all(rows.map(async (row) => {
++          const items = await pool.query(
++            'SELECT id, music_id, order_position FROM setlist_items '
++            + 'WHERE setlist_id = $1 ORDER BY order_position',
++            [row.id]
++          );
++          return mapSetlist(row, items.rows.map((item) => ({
++            id: item.id,
++            setlistId: row.id,
++            musicaId: item.music_id,
++            ordem: item.order_position
++          })));
++        }));
++      });
++    },
++
+     updateOrder(setlistId, bandId, items) {
+       return guarded(async () => {
+         const client = await pool.connect();
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/src/setlistApi.js SetFlow-patched/src/setlistApi.js
+--- a/src/setlistApi.js	2026-11-13 23:37:26.000000000 +0000
++++ b/src/setlistApi.js	2026-11-18 23:16:13.782547036 +0000
+@@ -86,6 +86,16 @@
+     }
+   });
+ 
++  router.get('/setlists', async (request, response, next) => {
++    try {
++      const band = await loadBand(request);
++      const setlists = await setlistRepository.listDraftsForBand(band.id);
++      response.status(200).json({ setlists });
++    } catch (error) {
++      next(error);
++    }
++  });
++
+   router.post('/setlists/:setlistId/sugestao', async (request, response, next) => {
+     try {
+       const band = await loadBand(request);
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/src/tests/frontend.test.js SetFlow-patched/src/tests/frontend.test.js
+--- a/src/tests/frontend.test.js	2026-11-13 23:37:26.000000000 +0000
++++ b/src/tests/frontend.test.js	2026-11-18 23:16:13.783283904 +0000
+@@ -16,6 +16,10 @@
+     const script = await request({ port, method: 'GET', path: '/app.js' });
+     assert.strictEqual(script.status, 200);
+     assert.match(script.body, /api\('\/api\/auth\/me'\)/);
++    assert.match(script.body, /\/sugestao`, \{ method: 'POST' \}/);
++    const submit = script.body.slice(script.body.indexOf("$('#auth-form').addEventListener"));
++    const csrfAt = submit.indexOf('state.csrfToken = result.csrfToken');
++    assert.ok(csrfAt >= 0 && csrfAt < submit.indexOf('await loadBands()'), 'CSRF deve ser guardado antes de loadBands()');
+   });
+ 
+   console.log('✅ Frontend mobile-first entregue pelo Express.');
+diff -ru -x node_modules -x .git -x package-lock.json SetFlow/src/tests/setlistHttp.test.js SetFlow-patched/src/tests/setlistHttp.test.js
+--- a/src/tests/setlistHttp.test.js	2026-11-13 23:37:26.000000000 +0000
++++ b/src/tests/setlistHttp.test.js	2026-11-18 23:16:13.783199437 +0000
+@@ -138,6 +138,14 @@
+     assert.strictEqual(reordered.status, 200);
+     assert.strictEqual(reordered.json.setlist.musicas[0].ordem, 1);
+     assert.ok(Object.prototype.hasOwnProperty.call(reordered.json, 'alerts'));
++
++    const drafts = await call(leader.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
++    assert.strictEqual(drafts.status, 200);
++    assert.ok(drafts.json.setlists.some((item) => item.id === created.json.setlist.id && item.estado === 'Rascunho'));
++    const draftsDenied = await call(musician.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
++    assert.strictEqual(draftsDenied.status, 403);
++    assert.strictEqual(draftsDenied.json.error.code, 'LEADER_REQUIRED');
++    console.log('✅ Líder lista os rascunhos da banda; músico não tem acesso.');
+     assert.strictEqual(reordered.json.alerts.duracaoTotalSegundos, 180);
+     console.log('✅ Reordenação manual atualiza a ordem e recalcula alertas.');
+ 

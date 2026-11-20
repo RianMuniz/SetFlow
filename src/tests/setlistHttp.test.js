@@ -138,6 +138,14 @@ console.log('🧪 Iniciando testes HTTP da SPEC-004...\n');
     assert.strictEqual(reordered.status, 200);
     assert.strictEqual(reordered.json.setlist.musicas[0].ordem, 1);
     assert.ok(Object.prototype.hasOwnProperty.call(reordered.json, 'alerts'));
+
+    const drafts = await call(leader.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
+    assert.strictEqual(drafts.status, 200);
+    assert.ok(drafts.json.setlists.some((item) => item.id === created.json.setlist.id && item.estado === 'Rascunho'));
+    const draftsDenied = await call(musician.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
+    assert.strictEqual(draftsDenied.status, 403);
+    assert.strictEqual(draftsDenied.json.error.code, 'LEADER_REQUIRED');
+    console.log('✅ Líder lista os rascunhos da banda; músico não tem acesso.');
     assert.strictEqual(reordered.json.alerts.duracaoTotalSegundos, 180);
     console.log('✅ Reordenação manual atualiza a ordem e recalcula alertas.');
 

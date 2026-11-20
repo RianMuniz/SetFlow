@@ -1,5 +1,6 @@
 const { createAuthApp } = require('./authHttp');
 const { createPool, assertDatabaseReady, ConfigurationError } = require('./db');
+const { resolveCookieSecure } = require('./cookieSecurity');
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -17,6 +18,10 @@ async function main() {
 
   const server = app.listen(PORT, () => {
     process.stdout.write(`SetFlow server running on port ${PORT}\n`);
+    if (resolveCookieSecure(process.env.COOKIE_SECURE, process.env.NODE_ENV === 'production')) {
+      process.stdout.write('Cookie de sessão com Secure: o login só funciona em HTTPS ou em localhost. '
+        + 'Para acessar por HTTP (ex.: celular na rede local), defina COOKIE_SECURE=false.\n');
+    }
   });
 
   const shutdown = () => {

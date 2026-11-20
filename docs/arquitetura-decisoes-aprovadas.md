@@ -68,7 +68,6 @@ Documento que consolida as decisões arquiteturais já tomadas (ADRs e Drivers),
 
 As questões abaixo continuam abertas por não terem sido resolvidas no documento de atualizações:
 
-- **Recuperação de senha:** fluxo fora do MVP ou a definir posteriormente.
 - **Representação de tom e enarmonia:** tratamento de notas enarmônicas e afinação alternativa.
 - **Validação de BPM:** limites e obrigatoriedade do campo.
 - **Backup e recuperação de dados:** estratégia de backup, replicação e recuperação de desastre.
@@ -93,7 +92,7 @@ As questões abaixo continuam abertas por não terem sido resolvidas no document
 | Bandas | Nome único por criador e criação transacional | ✅ Aprovado |
 | Contexto ativo | Endpoint dedicado e sessão do servidor | ✅ Aprovado |
 | Repositórios | PostgreSQL em produção e memória nos testes | ✅ Aprovado |
-| Recuperação de senha | Fora do MVP ou a definir | ⏳ Em aberto |
+| Recuperação de senha | Link de uso único (30 min), envio de e-mail plugável | ✅ Aprovado |
 | Enarmonia | Normalização de tons | ⏳ Em aberto |
 | BPM | Validação | ⏳ Em aberto |
 | Backup | Estratégia | ⏳ Em aberto |
@@ -107,7 +106,7 @@ As questões abaixo continuam abertas por não terem sido resolvidas no document
 ## Decisões resolvidas na implementação da SPEC-001
 
 - **Autenticação:** sessão HTTP no servidor, identificada por cookie.
-- **Cookie de sessão:** `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` apenas em produção.
+- **Cookie de sessão:** `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` apenas em produção (sobrescrevível por `COOKIE_SECURE`; `false` para implantações em HTTP, como o Docker Compose na rede local).
 - **Expiração de sessão:** 24 horas, sem renovação automática.
 - **Cadastro de usuário:** público (self-signup), com nickname obrigatório.
 - **Rate limiting:** 5 tentativas inválidas por `IP + e-mail normalizado` em janela de 15 minutos; bloqueio na 6ª tentativa com `HTTP 429`; limpeza após login bem-sucedido.

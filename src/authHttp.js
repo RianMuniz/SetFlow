@@ -2,7 +2,17 @@ const crypto = require('crypto');
 const express = require('express');
 const path = require('path');
 const { rateLimit } = require('express-rate-limit');
-const { SESSION_TTL_MS, createUser, verifyPassword } = require('./authService');
+const { SESSION_TTL_MS, createUser, verifyPassword, hashPassword } = require('./authService');
+const {
+  RESET_TOKEN_TTL_MS,
+  RESET_TOKEN_PATTERN,
+  hashResetToken,
+  generateResetToken,
+  buildResetLink,
+  buildResetEmail
+} = require('./passwordReset');
+const { createConsoleMailer } = require('./mailer');
+const { resolveCookieSecure } = require('./cookieSecurity');
 const { createError, sendError } = require('./httpErrors');
 const { normalizeNickname, validateNickname } = require('./nickname');
 const { DuplicateError } = require('./repositories/errors');
@@ -18,6 +28,8 @@ const RATE_LIMIT_MAX_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS = 20;
 const SESSION_CHECK_MAX_ATTEMPTS = 30;
+const RESET_REQUEST_MAX_PER_EMAIL = 3;
+const RESET_IP_MAX_ATTEMPTS = 20;
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -86,11 +98,11 @@ function parseCookies(cookieHeader) {
     }, {});
 }
 
-function resolveSessionCookieOptions(isProduction) {
+function resolveSessionCookieOptions(secure) {
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure: isProduction,
+    secure,
     path: '/',
     maxAge: SESSION_TTL_MS
   };
@@ -131,7 +143,8 @@ function createAuthApp(options = {}) {
     musicRepository,
     setlistRepository,
     masteryRepository,
-    sessionRepository
+    sessionRepository,
+    passwordResetRepository
   } = resolveRepositories(options);
   const activeSessionRepository = options.sessionsById
     ? {
@@ -154,11 +167,21 @@ function createAuthApp(options = {}) {
       },
       async delete(id) {
         options.sessionsById.delete(id);
+      },
+      async deleteByUserId(userId) {
+        for (const [id, current] of options.sessionsById.entries()) {
+          if (current.userId === userId) {
+            options.sessionsById.delete(id);
+          }
+        }
       }
     }
     : sessionRepository;
   const failedLogins = options.failedLogins || new Map();
   const failedSessionChecks = options.failedSessionChecks || new Map();
+  const resetRequests = options.resetRequests || new Map();
+  const mailer = options.mailer || createConsoleMailer();
+  const appBaseUrl = options.appBaseUrl || process.env.APP_BASE_URL || 'http://localhost:3000';
 
   const now = options.now || (() => Date.now());
   const isProduction = options.isProduction !== undefined
@@ -170,7 +193,11 @@ function createAuthApp(options = {}) {
 
   const newId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
   const app = express();
-  const sessionCookieOptions = resolveSessionCookieOptions(isProduction);
+  const cookieSecure = resolveCookieSecure(
+    options.cookieSecure !== undefined ? options.cookieSecure : process.env.COOKIE_SECURE,
+    isProduction
+  );
+  const sessionCookieOptions = resolveSessionCookieOptions(cookieSecure);
   const loginIpRateLimiter = rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
     limit: RATE_LIMIT_LOGIN_IP_MAX_ATTEMPTS,
@@ -181,6 +208,19 @@ function createAuthApp(options = {}) {
       sendError(response, 429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
     }
   });
+
+  const createResetIpRateLimiter = () => rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    limit: RESET_IP_MAX_ATTEMPTS,
+    standardHeaders: false,
+    legacyHeaders: false,
+    keyGenerator: (request) => getClientIp(request),
+    handler: (request, response) => {
+      sendError(response, 429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
+    }
+  });
+  const resetRequestIpRateLimiter = createResetIpRateLimiter();
+  const resetConfirmIpRateLimiter = createResetIpRateLimiter();
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '16kb' }));
@@ -424,6 +464,98 @@ function createAuthApp(options = {}) {
     }
   });
 
+  // ---- Redefinição de senha ("Esqueci minha senha")
+  const RESET_REQUEST_MESSAGE = 'Se o e-mail estiver cadastrado, enviaremos um link para redefinir a senha.';
+  const invalidResetToken = () => createError(400, 'INVALID_RESET_TOKEN', 'Link inválido ou expirado. Solicite um novo.');
+
+  async function sendPasswordResetEmail(email) {
+    const user = await userRepository.findByEmail(email);
+    if (!user || user.status !== 'active') {
+      return;
+    }
+
+    const { token, tokenHash } = generateResetToken();
+    const timestamp = now();
+    await passwordResetRepository.replaceForUser({
+      tokenHash,
+      userId: user.id,
+      createdAt: new Date(timestamp).toISOString(),
+      expiresAt: new Date(timestamp + RESET_TOKEN_TTL_MS).toISOString()
+    });
+    await mailer.send({
+      to: user.email,
+      ...buildResetEmail({ link: buildResetLink(appBaseUrl, token), ttlMinutes: RESET_TOKEN_TTL_MS / 60000 })
+    });
+  }
+
+  app.post('/api/auth/password-reset/request', resetRequestIpRateLimiter, async (request, response, next) => {
+    try {
+      const body = request.body;
+      if (!body || typeof body !== 'object') {
+        throw createError(400, 'VALIDATION_ERROR', 'Payload JSON obrigatório.');
+      }
+
+      const email = normalizeEmail(body.email);
+      if (!isValidEmail(email)) {
+        throw createError(400, 'VALIDATION_ERROR', 'E-mail inválido.');
+      }
+
+      const rateLimitKey = getRateLimitKey(request, email);
+      if (isRateLimited(resetRequests, rateLimitKey, RESET_REQUEST_MAX_PER_EMAIL)) {
+        throw createError(429, 'RATE_LIMIT_EXCEEDED', 'Muitas tentativas. Tente novamente mais tarde.');
+      }
+      registerFailedAttempt(resetRequests, rateLimitKey);
+
+      // Resposta idêntica exista ou não o e-mail (sem enumeração de contas); o trabalho
+      // roda depois de responder para o tempo de resposta também não revelar nada.
+      response.status(202).json({ message: RESET_REQUEST_MESSAGE });
+      sendPasswordResetEmail(email).catch((error) => {
+        process.stderr.write(`Falha ao processar redefinição de senha: ${error.message}\n`);
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/auth/password-reset/confirm', resetConfirmIpRateLimiter, async (request, response, next) => {
+    try {
+      const body = request.body;
+      if (!body || typeof body !== 'object') {
+        throw createError(400, 'VALIDATION_ERROR', 'Payload JSON obrigatório.');
+      }
+
+      const { token, password } = body;
+      if (typeof token !== 'string' || !RESET_TOKEN_PATTERN.test(token)) {
+        throw invalidResetToken();
+      }
+
+      // A senha é validada antes de consumir o token: senha fraca não "queima" o link.
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        throw createError(400, 'VALIDATION_ERROR', passwordError);
+      }
+
+      const userId = await passwordResetRepository.consume(hashResetToken(token), new Date(now()).toISOString());
+      const user = userId ? await userRepository.findById(userId) : null;
+      if (!user || user.status !== 'active') {
+        throw invalidResetToken();
+      }
+
+      const { salt, hash } = hashPassword(password);
+      await userRepository.updatePassword(user.id, { passwordHash: hash, passwordSalt: salt });
+      await activeSessionRepository.deleteByUserId(user.id);
+      for (const key of Array.from(failedLogins.keys())) {
+        if (key.endsWith(`|${user.email}`)) {
+          failedLogins.delete(key);
+        }
+      }
+
+      response.status(200).json({ success: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/auth/logout', async (request, response) => {
     const cookies = parseCookies(request.headers.cookie);
     const sessionId = cookies[cookieName];
@@ -509,6 +641,11 @@ function createAuthApp(options = {}) {
     const isJsonSyntaxError = error instanceof SyntaxError && error.status === 400 && 'body' in error;
     if (isJsonSyntaxError) {
       sendError(response, 400, 'VALIDATION_ERROR', 'JSON inválido.');
+      return;
+    }
+
+    if (error && error.status === 413 && error.type === 'entity.too.large') {
+      sendError(response, 413, 'PAYLOAD_TOO_LARGE', 'Conteúdo enviado maior que o limite permitido.');
       return;
     }
 

@@ -86,6 +86,16 @@ function createSetlistRouter({
     }
   });
 
+  router.get('/setlists', async (request, response, next) => {
+    try {
+      const band = await loadBand(request);
+      const setlists = await setlistRepository.listDraftsForBand(band.id);
+      response.status(200).json({ setlists });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post('/setlists/:setlistId/sugestao', async (request, response, next) => {
     try {
       const band = await loadBand(request);

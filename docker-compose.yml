@@ -22,6 +22,11 @@ services:
       DATABASE_URL: postgresql://setflow:setflow@db:5432/setflow
       PORT: 3000
       NODE_ENV: production
+      # Este Compose serve HTTP puro. Com Secure ativo o celular (acessando pelo IP da rede)
+      # descarta o cookie de sessão. Use "true" quando houver HTTPS (proxy reverso).
+      COOKIE_SECURE: "false"
+      # Base dos links enviados por e-mail (redefinição de senha).
+      APP_BASE_URL: http://localhost:3000
     ports:
       - "3000:3000"
 

@@ -24,6 +24,8 @@ const { createAuthApp, withServer, request } = require('./httpTestUtils');
     assert.match(script.body, /\/api\/auth\/password-reset\/request/);
     assert.match(script.body, /handleSessionLost/);
     assert.match(script.body, /data-toggle-band/);
+    assert.match(script.body, /data-add-open/);
+    assert.match(script.body, /\/musicas`, \{ method: 'POST', body: \{ musicaIds/);
     assert.match(script.body, /aria-expanded/);
     assert.match(script.body, /api\(`\/api\/bandas\/\$\{id\}`\)/);
     assert.match(script.body, /error\.status = response\.status/);

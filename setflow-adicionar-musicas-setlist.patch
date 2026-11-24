@@ -1,0 +1,469 @@
+diff
+--- a/README.md	2026-11-20 00:47:03.452445646 +0000
++++ b/README.md	2026-11-23 23:49:18.107958857 +0000
+@@ -56,6 +56,7 @@
+ - `POST /api/bandas/:bandId/setlists`
+ - `POST /api/bandas/:bandId/setlists/:setlistId/sugestao`
+ - `PUT /api/bandas/:bandId/setlists/:setlistId/ordem`
++- `POST /api/bandas/:bandId/setlists/:setlistId/musicas` (líder; só rascunho; `{ musicaIds }`; entram ao final)
+ - `POST /api/bandas/:bandId/setlists/:setlistId/confirmar`
+ - `POST /api/bandas/:bandId/setlists/:setlistId/reabrir`
+ - `POST /api/bandas/:bandId/setlists/:setlistId/tocar`
+diff
+--- a/docs/requisitos.md	2026-11-20 00:47:03.451635646 +0000
++++ b/docs/requisitos.md	2026-11-23 23:49:18.107759314 +0000
+@@ -26,6 +26,8 @@
+ 
+ RF-11 Reordenação manual. WHEN o líder reordena manualmente as músicas de um setlist em Rascunho, o sistema SHALL atualizar a ordem e recalcular as sinalizações de transição.
+ 
++RF-11A Inclusão de músicas no rascunho. WHEN o líder adiciona músicas a um setlist em Rascunho, o sistema SHALL acrescentá-las ao final, sem repetir músicas já presentes, e recalcular a duração total e o alerta de tempo. IF o setlist não estiver em Rascunho, THEN o sistema SHALL impedir a alteração (para editar um setlist Confirmado, o líder o reabre antes).
++
+ RF-12 Confirmação de setlist. WHEN o líder confirma um setlist, o sistema SHALL alterar seu estado para Confirmado e torná-lo visível aos músicos da banda.
+ 
+ RF-13 Marcação de setlist como tocado. WHEN o líder marca um setlist Confirmado como utilizado, o sistema SHALL alterar seu estado para Tocado. IF o setlist não estiver Confirmado, THEN o sistema SHALL impedir a transição direta para Tocado.
+diff
+--- a/docs/sdd-open-questions.md	2026-11-20 00:47:03.451671267 +0000
++++ b/docs/sdd-open-questions.md	2026-11-23 23:49:18.108100495 +0000
+@@ -29,6 +29,7 @@
+ - **Membro duplicado:** **resolvida** — `409 MEMBER_ALREADY_EXISTS`.
+ - **Cifra anexada (RF-05/RF-15):** **resolvida** — arquivo PDF, PNG, JPG ou TXT de até 5 MB, um por música, guardado em `music_chord_files` (PostgreSQL), tipo validado pelo conteúdo, download liberado a qualquer membro da banda e alteração restrita ao líder. O campo de texto `cifraAnexo` é mantido apenas para dados antigos.
+ - **Recuperação de senha:** **resolvida** — link de uso único por e-mail (256 bits, hash SHA-256 no banco, validade de 30 minutos, novo pedido invalida o anterior), resposta `202` idêntica para contas existentes e inexistentes, limite de 3 pedidos por IP + e-mail em 15 minutos, encerramento de todas as sessões ao redefinir. Sem provedor de e-mail no projeto, o envio é plugável e o padrão grava a mensagem no log do servidor.
++- **Inclusão de músicas após a criação do setlist (RF-11A):** **resolvida** — só o líder, só em Rascunho (setlist Confirmado precisa ser reaberto antes), músicas da própria banda, sem repetir músicas já presentes (409 `MUSIC_ALREADY_IN_SETLIST`), acrescentadas ao final na mesma transação, com duração total e alerta de tempo recalculados.
+ - **Contexto ativo:** **resolvida** — endpoint dedicado `POST /api/bandas/:bandId/ativa`, armazenado em sessão do servidor e revalidado contra o vínculo.
+ 
+ ## Decisões fechadas na SPEC-001
+diff
+--- a/package.json	2026-11-20 00:47:03.452166091 +0000
++++ b/package.json	2026-11-23 23:49:18.108322582 +0000
+@@ -5,7 +5,7 @@
+   "main": "src/server.js",
+   "scripts": {
+     "start": "node src/server.js",
+-    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/cookieSecurity.test.js && node src/tests/cookieSecureHttp.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
++    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/cookieSecurity.test.js && node src/tests/cookieSecureHttp.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistAddItems.test.js && node src/tests/setlistAddMusic.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
+     "db:migrate": "node src/migrate.js",
+     "test:pg": "node src/tests/pg/pgIntegration.test.js"
+   },
+diff
+--- a/public/app.js	2026-11-20 00:47:03.497142097 +0000
++++ b/public/app.js	2026-11-23 23:49:18.107437263 +0000
+@@ -284,12 +284,16 @@
+   if (!setlist) return;
+   const base = `/api/bandas/${state.band.id}/setlists/${setlist.id}`;
+   const detalhar = (musicaId) => ({ ...(state.music.find((song) => song.id === musicaId) || {}), musicaId });
+-  let items = [...setlist.musicas].sort((a, b) => a.ordem - b.ordem).map((item) => detalhar(item.musicaId));
++  const ordenar = (musicas) => [...musicas].sort((a, b) => a.ordem - b.ordem).map((item) => detalhar(item.musicaId));
++  let items = ordenar(setlist.musicas);
+   const duracaoTotalSegundos = items.reduce((total, item) => total + Number(item.duracaoSegundos || 0), 0);
+   let info = {
+     duracaoTotalSegundos,
+     alertaTempoExcedido: duracaoTotalSegundos > Number(setlist.tempoDisponivelSegundos || Infinity)
+   };
++  let adding = false;
++  let selected = new Set();
++  const available = () => state.music.filter((song) => !items.some((item) => item.musicaId === song.id));
+   const modal = showModal(escapeHtml(setlist.nome), '<div id="draft-body"></div>');
+   const body = modal.querySelector('#draft-body');
+   const run = async (task) => { try { await task(); } catch (error) { showToast(error.message, true); } };
+@@ -298,7 +302,12 @@
+     info = result.alerts;
+   };
+   const renderDraft = () => {
+-    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(info.duracaoTotalSegundos)}</p>${info.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${escapeHtml(item.tom)} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div><div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>`;
++    const free = available();
++    const addSection = adding
++      ? `<div class="card picker">${free.map((song) => `<label class="pick-row"><input type="checkbox" value="${song.id}" ${selected.has(song.id) ? 'checked' : ''}><span><strong>${escapeHtml(song.titulo)}</strong><small class="track-meta">${escapeHtml(song.tom)} · ${formatDuration(song.duracaoSegundos)}</small></span></label>`).join('')}</div><div class="actions" style="margin-top:12px"><button class="secondary" type="button" data-add-cancel>Cancelar</button><button class="primary" type="button" data-add-confirm ${selected.size ? '' : 'disabled'}>${selected.size ? `Adicionar (${selected.size})` : 'Adicionar'}</button></div>`
++      : `<button class="secondary" type="button" data-add-open ${free.length ? '' : 'disabled'} style="width:100%;margin-top:12px">+ Adicionar músicas</button>${free.length ? '' : '<small class="muted">Todas as músicas do repertório já estão neste setlist.</small>'}`;
++    const mainActions = adding ? '' : '<div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>';
++    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(info.duracaoTotalSegundos)}</p>${info.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${escapeHtml(item.tom)} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div>${addSection}${mainActions}`;
+     body.querySelectorAll('[data-move]').forEach((button) => button.addEventListener('click', () => run(async () => {
+       const from = Number(button.dataset.move), to = from + Number(button.dataset.dir);
+       if (to < 0 || to >= items.length) return;
+@@ -306,13 +315,32 @@
+       try { await saveOrder(); } catch (error) { [items[from], items[to]] = [items[to], items[from]]; throw error; }
+       renderDraft();
+     })));
+-    body.querySelector('[data-draft-suggest]').addEventListener('click', () => run(async () => {
++    const on = (selector, handler) => { const element = body.querySelector(selector); if (element) element.addEventListener('click', handler); };
++    on('[data-add-open]', () => { adding = true; selected = new Set(); renderDraft(); });
++    on('[data-add-cancel]', () => { adding = false; selected = new Set(); renderDraft(); });
++    body.querySelectorAll('.pick-row input').forEach((box) => box.addEventListener('change', () => {
++      if (box.checked) selected.add(box.value); else selected.delete(box.value);
++      const confirm = body.querySelector('[data-add-confirm]');
++      confirm.disabled = selected.size === 0;
++      confirm.textContent = selected.size ? `Adicionar (${selected.size})` : 'Adicionar';
++    }));
++    on('[data-add-confirm]', () => run(async () => {
++      const total = selected.size;
++      const result = await api(`${base}/musicas`, { method: 'POST', body: { musicaIds: [...selected] } });
++      items = ordenar(result.setlist.musicas);
++      info = result.alerts;
++      adding = false; selected = new Set();
++      renderDraft();
++      showToast(total === 1 ? '1 música adicionada ao final.' : `${total} músicas adicionadas ao final.`);
++      await loadBandData(); render();
++    }));
++    on('[data-draft-suggest]', () => run(async () => {
+       const result = await api(`${base}/sugestao`, { method: 'POST' });
+       items = result.sugestao.musicas.map((item) => detalhar(item.musicaId));
+       await saveOrder();
+       renderDraft();
+     }));
+-    body.querySelector('[data-draft-confirm]').addEventListener('click', () => run(async () => {
++    on('[data-draft-confirm]', () => run(async () => {
+       await api(`${base}/confirmar`, { method: 'POST' });
+       modal.closest('.modal-backdrop').remove();
+       await loadBandData(); render(); showToast('Setlist confirmado.');
+diff
+--- a/public/styles.css	2026-11-20 00:47:03.497510856 +0000
++++ b/public/styles.css	2026-11-23 23:50:16.657619481 +0000
+@@ -20,6 +20,13 @@
+ .link-button { background: transparent; color: var(--primary-dark); font-size: 14px; font-weight: 700; padding: 10px 6px; text-decoration: underline; }
+ #auth-info:not(:empty) { margin: 0 0 12px; }
+ .band-item { padding: 0; }
++input[type="checkbox"] { width: 20px; height: 20px; padding: 0; flex: none; accent-color: var(--primary); }
++.picker { padding: 4px 14px; max-height: 42vh; overflow: auto; }
++.pick-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
++.pick-row:last-child { border-bottom: 0; }
++.pick-row { font-size: 15px; font-weight: 500; }
++.pick-row strong { font-size: 15px; color: var(--ink); }
++.pick-row .track-meta { font-weight: 500; }
+ .band-item .band-card { padding: 16px; background: transparent; border-radius: 18px; }
+ .band-meta { display: flex; align-items: center; gap: 10px; }
+ .chevron { font-size: 22px; color: var(--muted); transition: transform .15s ease; }
+diff
+--- a/src/repositories/memoryRepositories.js	2026-11-20 00:47:03.453357740 +0000
++++ b/src/repositories/memoryRepositories.js	2026-11-23 23:49:18.106435931 +0000
+@@ -252,6 +252,22 @@
+       return this.findForBand(setlistId, bandId);
+     },
+ 
++    // Acrescenta músicas ao final de um rascunho. null: inexistente, de outra banda ou fora de Rascunho.
++    async addItems(setlistId, bandId, items) {
++      const setlist = setlists.get(setlistId);
++      if (!setlist || setlist.bandaId !== bandId || setlist.estado !== 'Rascunho') {
++        return null;
++      }
++
++      const current = setlistItems.get(setlistId) || [];
++      const last = current.reduce((max, item) => Math.max(max, item.ordem), 0);
++      setlistItems.set(setlistId, [
++        ...current,
++        ...items.map((item, index) => ({ id: item.id, setlistId, musicaId: item.musicaId, ordem: last + index + 1 }))
++      ]);
++      return this.findForBand(setlistId, bandId);
++    },
++
+     async updateState(setlistId, bandId, state) {
+       const setlist = setlists.get(setlistId);
+       if (!setlist || setlist.bandaId !== bandId) {
+diff
+--- a/src/repositories/pgRepositories.js	2026-11-20 00:47:03.453372758 +0000
++++ b/src/repositories/pgRepositories.js	2026-11-23 23:49:18.106796740 +0000
+@@ -539,6 +539,62 @@
+       });
+     },
+ 
++    // Acrescenta músicas ao final de um rascunho, na mesma transação e com a linha do setlist
++    // bloqueada (FOR UPDATE): pedidos simultâneos não geram posições repetidas.
++    addItems(setlistId, bandId, items) {
++      return guarded(async () => {
++        const client = await pool.connect();
++        let rollbackFailed = false;
++
++        try {
++          await client.query('BEGIN');
++          const current = await client.query(
++            'SELECT id, band_id, name, event_date, available_seconds, state '
++            + 'FROM setlists WHERE id = $1 AND band_id = $2 FOR UPDATE',
++            [setlistId, bandId]
++          );
++          if (!current.rows[0] || current.rows[0].state !== 'Rascunho') {
++            await client.query('ROLLBACK');
++            return null;
++          }
++
++          const last = await client.query(
++            'SELECT COALESCE(MAX(order_position), 0) AS last FROM setlist_items WHERE setlist_id = $1',
++            [setlistId]
++          );
++          let position = Number(last.rows[0].last);
++          for (const item of items) {
++            position += 1;
++            await client.query(
++              'INSERT INTO setlist_items (id, setlist_id, music_id, order_position) VALUES ($1, $2, $3, $4)',
++              [item.id, setlistId, item.musicaId, position]
++            );
++          }
++
++          const all = await client.query(
++            'SELECT id, music_id, order_position FROM setlist_items WHERE setlist_id = $1 ORDER BY order_position',
++            [setlistId]
++          );
++          await client.query('COMMIT');
++          return mapSetlist(current.rows[0], all.rows.map((row) => ({
++            id: row.id,
++            setlistId,
++            musicaId: row.music_id,
++            ordem: row.order_position
++          })));
++        } catch (error) {
++          try {
++            await client.query('ROLLBACK');
++          } catch (rollbackError) {
++            rollbackFailed = true;
++          }
++          throw error;
++        } finally {
++          client.release(rollbackFailed ? true : undefined);
++        }
++      });
++    },
++
+     updateState(setlistId, bandId, state) {
+       return guarded(async () => {
+         const { rows } = await pool.query(
+diff
+--- a/src/setlistApi.js	2026-11-20 00:47:03.453512267 +0000
++++ b/src/setlistApi.js	2026-11-23 23:49:18.106993240 +0000
+@@ -221,6 +221,50 @@
+     }
+   });
+ 
++  // Inclusão de músicas depois da criação: só o líder, só em Rascunho (para editar um
++  // setlist confirmado é preciso reabri-lo antes). As novas músicas entram ao final.
++  router.post('/setlists/:setlistId/musicas', async (request, response, next) => {
++    try {
++      const { band, setlist } = await loadDraft(request);
++      if (setlist.estado !== 'Rascunho') {
++        throw createError(409, 'SETLIST_NOT_DRAFT', 'Apenas rascunhos podem receber novas músicas. Reabra o setlist para editá-lo.');
++      }
++
++      const { musicaIds } = bodyOf(request);
++      if (!Array.isArray(musicaIds) || musicaIds.length === 0 || musicaIds.some((id) => typeof id !== 'string')) {
++        throw createError(400, 'VALIDATION_ERROR', 'Informe ao menos uma música para adicionar.');
++      }
++      if (new Set(musicaIds).size !== musicaIds.length) {
++        throw createError(400, 'VALIDATION_ERROR', 'A lista contém músicas repetidas.');
++      }
++
++      const present = new Set(setlist.musicas.map((item) => item.musicaId));
++      for (const musicId of musicaIds) {
++        const music = await musicRepository.findForBand(musicId, band.id);
++        if (!music) {
++          throw createError(400, 'MUSIC_OUTSIDE_BAND', 'Música não pertence à banda ativa.');
++        }
++        if (present.has(musicId)) {
++          throw createError(409, 'MUSIC_ALREADY_IN_SETLIST', `A música "${music.titulo}" já está no setlist.`);
++        }
++      }
++
++      const updated = await setlistRepository.addItems(
++        setlist.id,
++        band.id,
++        musicaIds.map((musicId) => ({ id: newId('sli'), musicaId: musicId }))
++      );
++      if (!updated) {
++        throw createError(409, 'SETLIST_NOT_DRAFT', 'Apenas rascunhos podem receber novas músicas. Reabra o setlist para editá-lo.');
++      }
++
++      const alerts = await calculatedView(updated, band);
++      response.status(201).json({ setlist: updated, alerts });
++    } catch (error) {
++      next(error);
++    }
++  });
++
+   router.post('/setlists/:setlistId/confirmar', async (request, response, next) => {
+     try {
+       const { band, setlist } = await loadDraft(request);
+diff
+--- a/src/tests/frontend.test.js	2026-11-20 00:47:03.497625924 +0000
++++ b/src/tests/frontend.test.js	2026-11-23 23:49:18.108447065 +0000
+@@ -24,6 +24,8 @@
+     assert.match(script.body, /\/api\/auth\/password-reset\/request/);
+     assert.match(script.body, /handleSessionLost/);
+     assert.match(script.body, /data-toggle-band/);
++    assert.match(script.body, /data-add-open/);
++    assert.match(script.body, /\/musicas`, \{ method: 'POST', body: \{ musicaIds/);
+     assert.match(script.body, /aria-expanded/);
+     assert.match(script.body, /api\(`\/api\/bandas\/\$\{id\}`\)/);
+     assert.match(script.body, /error\.status = response\.status/);
+diff
+--- a/src/tests/setlistAddItems.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/setlistAddItems.test.js	2026-11-23 23:49:18.108191080 +0000
+@@ -0,0 +1,68 @@
++const assert = require('assert');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++const { createPgRepositories } = require('../repositories/pgRepositories');
++
++console.log('🧪 Iniciando testes de inclusão de músicas no setlist (repositórios)...\n');
++
++(async function main() {
++  // ---- memória
++  const { setlistRepository } = createMemoryRepositories();
++  const setlist = { id: 'sl1', bandaId: 'b1', nome: 'Show', data: '2026-11-20', tempoDisponivelSegundos: 3600, estado: 'Rascunho' };
++  await setlistRepository.createWithItems({ setlist, items: [{ id: 'i1', setlistId: 'sl1', musicaId: 'm1', ordem: 1 }] });
++
++  const added = await setlistRepository.addItems('sl1', 'b1', [{ id: 'i2', musicaId: 'm2' }, { id: 'i3', musicaId: 'm3' }]);
++  assert.deepStrictEqual(added.musicas.map((item) => [item.musicaId, item.ordem]), [['m1', 1], ['m2', 2], ['m3', 3]]);
++  assert.strictEqual(await setlistRepository.addItems('sl1', 'outra-banda', [{ id: 'x', musicaId: 'm9' }]), null);
++  assert.strictEqual(await setlistRepository.addItems('nao-existe', 'b1', [{ id: 'x', musicaId: 'm9' }]), null);
++  await setlistRepository.updateState('sl1', 'b1', 'Confirmado');
++  assert.strictEqual(await setlistRepository.addItems('sl1', 'b1', [{ id: 'x', musicaId: 'm9' }]), null, 'fora de Rascunho não aceita músicas');
++  assert.strictEqual((await setlistRepository.findForBand('sl1', 'b1')).musicas.length, 3);
++  console.log('✅ Memória: músicas entram ao final; banda errada, inexistente e não-rascunho são recusados.');
++
++  // ---- PostgreSQL (cliente falso)
++  function fakePool({ state = 'Rascunho', found = true, last = 2 } = {}) {
++    const log = [];
++    const client = {
++      async query(text, params) {
++        const sql = String(text).replace(/\s+/g, ' ').trim();
++        log.push({ sql, params });
++        if (sql.startsWith('SELECT id, band_id') && sql.includes('FOR UPDATE')) {
++          return { rows: found ? [{ id: 'sl1', band_id: 'b1', name: 'Show', event_date: '2026-11-20', available_seconds: '3600', state }] : [] };
++        }
++        if (sql.startsWith('SELECT COALESCE(MAX(order_position)')) {
++          return { rows: [{ last }] };
++        }
++        if (sql.startsWith('SELECT id, music_id, order_position')) {
++          return { rows: [{ id: 'i1', music_id: 'm1', order_position: 1 }, { id: 'i2', music_id: 'm2', order_position: 2 }, { id: 'n1', music_id: 'm3', order_position: 3 }, { id: 'n2', music_id: 'm4', order_position: 4 }] };
++        }
++        return { rows: [] };
++      },
++      release() { log.push({ sql: 'RELEASE' }); }
++    };
++    return { log, pool: { async connect() { return client; } } };
++  }
++  const silent = { error() {}, warn() {}, info() {} };
++
++  const ok = fakePool();
++  const { setlistRepository: pgRepo } = createPgRepositories(ok.pool, { logger: silent });
++  const saved = await pgRepo.addItems('sl1', 'b1', [{ id: 'n1', musicaId: 'm3' }, { id: 'n2', musicaId: 'm4' }]);
++  const steps = ok.log.map((entry) => entry.sql.split(' ').slice(0, 2).join(' '));
++  assert.deepStrictEqual(steps.filter((step, index) => index === 0 || index === steps.length - 2 || index === steps.length - 1), ['BEGIN', 'COMMIT', 'RELEASE']);
++  assert.ok(ok.log.some((entry) => entry.sql.includes('FOR UPDATE') && entry.params[1] === 'b1'), 'trava o setlist da banda correta');
++  const inserts = ok.log.filter((entry) => entry.sql.startsWith('INSERT INTO setlist_items'));
++  assert.deepStrictEqual(inserts.map((entry) => entry.params), [['n1', 'sl1', 'm3', 3], ['n2', 'sl1', 'm4', 4]], 'posições continuam após a última');
++  assert.deepStrictEqual(saved.musicas.map((item) => item.ordem), [1, 2, 3, 4]);
++
++  for (const scenario of [{ found: false }, { state: 'Confirmado' }]) {
++    const blocked = fakePool(scenario);
++    const { setlistRepository: repo } = createPgRepositories(blocked.pool, { logger: silent });
++    assert.strictEqual(await repo.addItems('sl1', 'b1', [{ id: 'n1', musicaId: 'm3' }]), null);
++    assert.ok(blocked.log.some((entry) => entry.sql === 'ROLLBACK') && !blocked.log.some((entry) => entry.sql.startsWith('INSERT')));
++  }
++  console.log('✅ PostgreSQL: transação com FOR UPDATE, posições após a última e ROLLBACK quando não é rascunho.');
++
++  console.log('\n🎉 Todos os testes de inclusão de músicas (repositórios) passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff
+--- a/src/tests/setlistAddMusic.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/setlistAddMusic.test.js	2026-11-23 23:49:25.445368240 +0000
+@@ -0,0 +1,102 @@
++const assert = require('assert');
++const { createAuthApp, request, extractCookieValue, withServer } = require('./httpTestUtils');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++
++console.log('🧪 Iniciando testes HTTP da inclusão de músicas no setlist...\n');
++
++(async function main() {
++  const app = createAuthApp({ repositories: createMemoryRepositories(), isProduction: false });
++
++  await withServer(app, async ({ port }) => {
++    let sequence = 0;
++    const call = (cookie, method, path, body) => request({ port, method, path, body, headers: cookie ? { Cookie: cookie } : {} });
++
++    async function signUp(prefix) {
++      sequence += 1;
++      const nickname = `${prefix}${sequence}`;
++      const response = await call(null, 'POST', '/api/auth/register', { nickname, email: `${nickname}@teste.com`, password: 'senha1234' });
++      assert.strictEqual(response.status, 201);
++      return { cookie: extractCookieValue(response.headers['set-cookie'], 'setflow_session'), nickname };
++    }
++
++    async function createMusic(user, bandId, titulo) {
++      const response = await call(user.cookie, 'POST', `/api/bandas/${bandId}/musicas`, { titulo, tom: 'C', bpm: 120, duracaoSegundos: 180 });
++      assert.strictEqual(response.status, 201);
++      return response.json.music.id;
++    }
++
++    const leader = await signUp('lider');
++    const musician = await signUp('musico');
++    const outsider = await signUp('fora');
++    const bandId = (await call(leader.cookie, 'POST', '/api/bandas', { name: 'Banda Add' })).json.band.id;
++    const otherBandId = (await call(outsider.cookie, 'POST', '/api/bandas', { name: 'Banda Externa' })).json.band.id;
++    await call(leader.cookie, 'POST', `/api/bandas/${bandId}/membros`, { nickname: musician.nickname });
++
++    const musicIds = [];
++    for (const title of ['Um', 'Dois', 'Três', 'Quatro']) {
++      musicIds.push(await createMusic(leader, bandId, title));
++    }
++    const [m1, m2, m3, m4] = musicIds;
++    const foreign = await createMusic(outsider, otherBandId, 'De fora');
++
++    const created = await call(leader.cookie, 'POST', `/api/bandas/${bandId}/setlists`, {
++      nome: 'Ensaio', data: '2026-11-20', tempoDisponivelSegundos: 400, musicaIds: [m1]
++    });
++    assert.strictEqual(created.status, 201);
++    const base = `/api/bandas/${bandId}/setlists/${created.json.setlist.id}`;
++
++    // ---- adicionar depois de criado
++    const added = await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [m2, m3] });
++    assert.strictEqual(added.status, 201);
++    assert.deepStrictEqual(added.json.setlist.musicas.map((item) => [item.musicaId, item.ordem]), [[m1, 1], [m2, 2], [m3, 3]]);
++    assert.strictEqual(added.json.alerts.duracaoTotalSegundos, 540);
++    assert.strictEqual(added.json.alerts.alertaTempoExcedido, true, '540s > 400s disponíveis');
++    const drafts = await call(leader.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
++    assert.strictEqual(drafts.json.setlists[0].musicas.length, 3);
++    console.log('✅ Líder adiciona músicas ao rascunho: entram ao final e o alerta de tempo é recalculado.');
++
++    const reordered = await call(leader.cookie, 'PUT', `${base}/ordem`, { musicaIds: [m3, m1, m2] });
++    assert.strictEqual(reordered.status, 200);
++    console.log('✅ Setlist com músicas adicionadas continua podendo ser reordenado.');
++
++    // ---- validações (nada muda quando recusado)
++    const dup = await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4, m2] });
++    assert.strictEqual(dup.status, 409);
++    assert.strictEqual(dup.json.error.code, 'MUSIC_ALREADY_IN_SETLIST');
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4, m4] })).status, 400);
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [] })).status, 400);
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: m4 })).status, 400);
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/musicas`, {})).status, 400);
++    const outside = await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [foreign] });
++    assert.strictEqual(outside.status, 400);
++    assert.strictEqual(outside.json.error.code, 'MUSIC_OUTSIDE_BAND');
++    assert.strictEqual((await call(leader.cookie, 'POST', `/api/bandas/${bandId}/setlists/inexistente/musicas`, { musicaIds: [m4] })).status, 404);
++    const unchanged = await call(leader.cookie, 'GET', `/api/bandas/${bandId}/setlists`);
++    assert.strictEqual(unchanged.json.setlists[0].musicas.length, 3, 'pedidos recusados não alteram o setlist');
++    console.log('✅ Duplicadas, repetidas, vazias, de outra banda e setlist inexistente são recusadas sem alterar nada.');
++
++    // ---- permissões
++    const asMusician = await call(musician.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4] });
++    assert.strictEqual(asMusician.status, 403);
++    assert.strictEqual(asMusician.json.error.code, 'LEADER_REQUIRED');
++    assert.strictEqual((await call(outsider.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4] })).status, 403);
++    assert.strictEqual((await call(null, 'POST', `${base}/musicas`, { musicaIds: [m4] })).status, 401);
++    console.log('✅ Somente o líder da banda adiciona músicas.');
++
++    // ---- estado: confirmado exige reabrir
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/confirmar`)).status, 200);
++    const locked = await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4] });
++    assert.strictEqual(locked.status, 409);
++    assert.strictEqual(locked.json.error.code, 'SETLIST_NOT_DRAFT');
++    assert.strictEqual((await call(leader.cookie, 'POST', `${base}/reabrir`)).status, 200);
++    const again = await call(leader.cookie, 'POST', `${base}/musicas`, { musicaIds: [m4] });
++    assert.strictEqual(again.status, 201);
++    assert.strictEqual(again.json.setlist.musicas.length, 4);
++    console.log('✅ Setlist confirmado recusa novas músicas; depois de reaberto volta a aceitar.');
++  });
++
++  console.log('\n🎉 Todos os testes HTTP da inclusão de músicas passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});

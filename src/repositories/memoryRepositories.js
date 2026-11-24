@@ -252,6 +252,22 @@ function createMemoryRepositories(options = {}) {
       return this.findForBand(setlistId, bandId);
     },
 
+    // Acrescenta músicas ao final de um rascunho. null: inexistente, de outra banda ou fora de Rascunho.
+    async addItems(setlistId, bandId, items) {
+      const setlist = setlists.get(setlistId);
+      if (!setlist || setlist.bandaId !== bandId || setlist.estado !== 'Rascunho') {
+        return null;
+      }
+
+      const current = setlistItems.get(setlistId) || [];
+      const last = current.reduce((max, item) => Math.max(max, item.ordem), 0);
+      setlistItems.set(setlistId, [
+        ...current,
+        ...items.map((item, index) => ({ id: item.id, setlistId, musicaId: item.musicaId, ordem: last + index + 1 }))
+      ]);
+      return this.findForBand(setlistId, bandId);
+    },
+
     async updateState(setlistId, bandId, state) {
       const setlist = setlists.get(setlistId);
       if (!setlist || setlist.bandaId !== bandId) {

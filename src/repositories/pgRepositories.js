@@ -539,6 +539,62 @@ function createPgRepositories(pool, options = {}) {
       });
     },
 
+    // Acrescenta músicas ao final de um rascunho, na mesma transação e com a linha do setlist
+    // bloqueada (FOR UPDATE): pedidos simultâneos não geram posições repetidas.
+    addItems(setlistId, bandId, items) {
+      return guarded(async () => {
+        const client = await pool.connect();
+        let rollbackFailed = false;
+
+        try {
+          await client.query('BEGIN');
+          const current = await client.query(
+            'SELECT id, band_id, name, event_date, available_seconds, state '
+            + 'FROM setlists WHERE id = $1 AND band_id = $2 FOR UPDATE',
+            [setlistId, bandId]
+          );
+          if (!current.rows[0] || current.rows[0].state !== 'Rascunho') {
+            await client.query('ROLLBACK');
+            return null;
+          }
+
+          const last = await client.query(
+            'SELECT COALESCE(MAX(order_position), 0) AS last FROM setlist_items WHERE setlist_id = $1',
+            [setlistId]
+          );
+          let position = Number(last.rows[0].last);
+          for (const item of items) {
+            position += 1;
+            await client.query(
+              'INSERT INTO setlist_items (id, setlist_id, music_id, order_position) VALUES ($1, $2, $3, $4)',
+              [item.id, setlistId, item.musicaId, position]
+            );
+          }
+
+          const all = await client.query(
+            'SELECT id, music_id, order_position FROM setlist_items WHERE setlist_id = $1 ORDER BY order_position',
+            [setlistId]
+          );
+          await client.query('COMMIT');
+          return mapSetlist(current.rows[0], all.rows.map((row) => ({
+            id: row.id,
+            setlistId,
+            musicaId: row.music_id,
+            ordem: row.order_position
+          })));
+        } catch (error) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            rollbackFailed = true;
+          }
+          throw error;
+        } finally {
+          client.release(rollbackFailed ? true : undefined);
+        }
+      });
+    },
+
     updateState(setlistId, bandId, state) {
       return guarded(async () => {
         const { rows } = await pool.query(

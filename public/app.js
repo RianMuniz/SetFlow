@@ -284,12 +284,16 @@ async function openDraft(setlist) {
   if (!setlist) return;
   const base = `/api/bandas/${state.band.id}/setlists/${setlist.id}`;
   const detalhar = (musicaId) => ({ ...(state.music.find((song) => song.id === musicaId) || {}), musicaId });
-  let items = [...setlist.musicas].sort((a, b) => a.ordem - b.ordem).map((item) => detalhar(item.musicaId));
+  const ordenar = (musicas) => [...musicas].sort((a, b) => a.ordem - b.ordem).map((item) => detalhar(item.musicaId));
+  let items = ordenar(setlist.musicas);
   const duracaoTotalSegundos = items.reduce((total, item) => total + Number(item.duracaoSegundos || 0), 0);
   let info = {
     duracaoTotalSegundos,
     alertaTempoExcedido: duracaoTotalSegundos > Number(setlist.tempoDisponivelSegundos || Infinity)
   };
+  let adding = false;
+  let selected = new Set();
+  const available = () => state.music.filter((song) => !items.some((item) => item.musicaId === song.id));
   const modal = showModal(escapeHtml(setlist.nome), '<div id="draft-body"></div>');
   const body = modal.querySelector('#draft-body');
   const run = async (task) => { try { await task(); } catch (error) { showToast(error.message, true); } };
@@ -298,7 +302,12 @@ async function openDraft(setlist) {
     info = result.alerts;
   };
   const renderDraft = () => {
-    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(info.duracaoTotalSegundos)}</p>${info.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${escapeHtml(item.tom)} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div><div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>`;
+    const free = available();
+    const addSection = adding
+      ? `<div class="card picker">${free.map((song) => `<label class="pick-row"><input type="checkbox" value="${song.id}" ${selected.has(song.id) ? 'checked' : ''}><span><strong>${escapeHtml(song.titulo)}</strong><small class="track-meta">${escapeHtml(song.tom)} · ${formatDuration(song.duracaoSegundos)}</small></span></label>`).join('')}</div><div class="actions" style="margin-top:12px"><button class="secondary" type="button" data-add-cancel>Cancelar</button><button class="primary" type="button" data-add-confirm ${selected.size ? '' : 'disabled'}>${selected.size ? `Adicionar (${selected.size})` : 'Adicionar'}</button></div>`
+      : `<button class="secondary" type="button" data-add-open ${free.length ? '' : 'disabled'} style="width:100%;margin-top:12px">+ Adicionar músicas</button>${free.length ? '' : '<small class="muted">Todas as músicas do repertório já estão neste setlist.</small>'}`;
+    const mainActions = adding ? '' : '<div class="actions" style="margin-top:14px"><button class="secondary" data-draft-suggest>Sugerir ordem</button><button class="primary" data-draft-confirm>Confirmar</button></div>';
+    body.innerHTML = `<p class="muted">${dateLabel(setlist.data)} · ${formatDuration(info.duracaoTotalSegundos)}</p>${info.alertaTempoExcedido ? '<div class="alert">O tempo disponível foi excedido.</div>' : ''}<div class="card">${items.map((item, index) => `<div class="track"><span class="track-index">${index + 1}</span><div class="track-main"><strong>${escapeHtml(item.titulo)}</strong><small class="track-meta">${escapeHtml(item.tom)} · ${formatDuration(item.duracaoSegundos)}</small></div><div class="actions"><button data-move="${index}" data-dir="-1">↑</button><button data-move="${index}" data-dir="1">↓</button></div></div>`).join('')}</div>${addSection}${mainActions}`;
     body.querySelectorAll('[data-move]').forEach((button) => button.addEventListener('click', () => run(async () => {
       const from = Number(button.dataset.move), to = from + Number(button.dataset.dir);
       if (to < 0 || to >= items.length) return;
@@ -306,13 +315,32 @@ async function openDraft(setlist) {
       try { await saveOrder(); } catch (error) { [items[from], items[to]] = [items[to], items[from]]; throw error; }
       renderDraft();
     })));
-    body.querySelector('[data-draft-suggest]').addEventListener('click', () => run(async () => {
+    const on = (selector, handler) => { const element = body.querySelector(selector); if (element) element.addEventListener('click', handler); };
+    on('[data-add-open]', () => { adding = true; selected = new Set(); renderDraft(); });
+    on('[data-add-cancel]', () => { adding = false; selected = new Set(); renderDraft(); });
+    body.querySelectorAll('.pick-row input').forEach((box) => box.addEventListener('change', () => {
+      if (box.checked) selected.add(box.value); else selected.delete(box.value);
+      const confirm = body.querySelector('[data-add-confirm]');
+      confirm.disabled = selected.size === 0;
+      confirm.textContent = selected.size ? `Adicionar (${selected.size})` : 'Adicionar';
+    }));
+    on('[data-add-confirm]', () => run(async () => {
+      const total = selected.size;
+      const result = await api(`${base}/musicas`, { method: 'POST', body: { musicaIds: [...selected] } });
+      items = ordenar(result.setlist.musicas);
+      info = result.alerts;
+      adding = false; selected = new Set();
+      renderDraft();
+      showToast(total === 1 ? '1 música adicionada ao final.' : `${total} músicas adicionadas ao final.`);
+      await loadBandData(); render();
+    }));
+    on('[data-draft-suggest]', () => run(async () => {
       const result = await api(`${base}/sugestao`, { method: 'POST' });
       items = result.sugestao.musicas.map((item) => detalhar(item.musicaId));
       await saveOrder();
       renderDraft();
     }));
-    body.querySelector('[data-draft-confirm]').addEventListener('click', () => run(async () => {
+    on('[data-draft-confirm]', () => run(async () => {
       await api(`${base}/confirmar`, { method: 'POST' });
       modal.closest('.modal-backdrop').remove();
       await loadBandData(); render(); showToast('Setlist confirmado.');

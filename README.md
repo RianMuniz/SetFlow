@@ -56,6 +56,7 @@ Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickna
 - `POST /api/bandas/:bandId/setlists`
 - `POST /api/bandas/:bandId/setlists/:setlistId/sugestao`
 - `PUT /api/bandas/:bandId/setlists/:setlistId/ordem`
+- `POST /api/bandas/:bandId/setlists/:setlistId/musicas` (líder; só rascunho; `{ musicaIds }`; entram ao final)
 - `POST /api/bandas/:bandId/setlists/:setlistId/confirmar`
 - `POST /api/bandas/:bandId/setlists/:setlistId/reabrir`
 - `POST /api/bandas/:bandId/setlists/:setlistId/tocar`

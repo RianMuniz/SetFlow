@@ -221,6 +221,50 @@ function createSetlistRouter({
     }
   });
 
+  // Inclusão de músicas depois da criação: só o líder, só em Rascunho (para editar um
+  // setlist confirmado é preciso reabri-lo antes). As novas músicas entram ao final.
+  router.post('/setlists/:setlistId/musicas', async (request, response, next) => {
+    try {
+      const { band, setlist } = await loadDraft(request);
+      if (setlist.estado !== 'Rascunho') {
+        throw createError(409, 'SETLIST_NOT_DRAFT', 'Apenas rascunhos podem receber novas músicas. Reabra o setlist para editá-lo.');
+      }
+
+      const { musicaIds } = bodyOf(request);
+      if (!Array.isArray(musicaIds) || musicaIds.length === 0 || musicaIds.some((id) => typeof id !== 'string')) {
+        throw createError(400, 'VALIDATION_ERROR', 'Informe ao menos uma música para adicionar.');
+      }
+      if (new Set(musicaIds).size !== musicaIds.length) {
+        throw createError(400, 'VALIDATION_ERROR', 'A lista contém músicas repetidas.');
+      }
+
+      const present = new Set(setlist.musicas.map((item) => item.musicaId));
+      for (const musicId of musicaIds) {
+        const music = await musicRepository.findForBand(musicId, band.id);
+        if (!music) {
+          throw createError(400, 'MUSIC_OUTSIDE_BAND', 'Música não pertence à banda ativa.');
+        }
+        if (present.has(musicId)) {
+          throw createError(409, 'MUSIC_ALREADY_IN_SETLIST', `A música "${music.titulo}" já está no setlist.`);
+        }
+      }
+
+      const updated = await setlistRepository.addItems(
+        setlist.id,
+        band.id,
+        musicaIds.map((musicId) => ({ id: newId('sli'), musicaId: musicId }))
+      );
+      if (!updated) {
+        throw createError(409, 'SETLIST_NOT_DRAFT', 'Apenas rascunhos podem receber novas músicas. Reabra o setlist para editá-lo.');
+      }
+
+      const alerts = await calculatedView(updated, band);
+      response.status(201).json({ setlist: updated, alerts });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post('/setlists/:setlistId/confirmar', async (request, response, next) => {
     try {
       const { band, setlist } = await loadDraft(request);

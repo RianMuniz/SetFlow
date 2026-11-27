@@ -10,6 +10,8 @@ RF-02 Criação de banda. WHEN um usuário cria uma banda, o sistema SHALL regis
 
 RF-03 Vínculo de músico à banda. WHEN o líder adiciona um músico a uma banda, o sistema SHALL vincular esse usuário como músico daquela banda.
 
+RF-02A Edição do nome da banda. WHEN o líder altera o nome de uma banda, o sistema SHALL atualizar o nome para todos os membros, aplicando as mesmas regras da criação (obrigatório, até 60 caracteres e único entre as bandas criadas pelo líder, sem diferenciar maiúsculas de minúsculas). IF o usuário não for o líder da banda, THEN o sistema SHALL impedir a alteração.
+
 RF-04 Troca de contexto entre bandas. WHEN um usuário pertence a mais de uma banda, o sistema SHALL permitir alternar entre as bandas às quais pertence, exibindo apenas os dados da banda selecionada.
 
 RF-05 Cadastro de música. WHEN o líder cadastra uma música em uma banda, o sistema SHALL armazenar tom, BPM, duração, observações e a cifra anexada.

@@ -323,6 +323,36 @@ const input = { bandId: 'b-1', memberId: 'm-1', name: 'Banda', nameNormalized: '
     console.log('✅ Repositório PG: token de uso único atômico, troca de senha e limpeza de sessões.');
   }
 
+  // 7e. Edição do nome da banda: UPDATE parametrizado e unicidade por criador
+  {
+    const queries = [];
+    let mode = 'ok';
+    const pool = {
+      async query(text, params) {
+        queries.push({ text: String(text), params });
+        if (mode === 'duplicate') {
+          const error = new Error('duplicate key');
+          error.code = '23505';
+          error.constraint = 'bands_creator_name_unique';
+          throw error;
+        }
+        return { rows: [], rowCount: mode === 'missing' ? 0 : 1 };
+      }
+    };
+    const { bandRepository } = createPgRepositories(pool, { logger: silent });
+    assert.strictEqual(await bandRepository.rename({ bandId: 'b-1', name: 'Novo Nome', nameNormalized: 'novo nome' }), true);
+    assert.strictEqual(queries[0].text, 'UPDATE bands SET name = $2, name_normalized = $3 WHERE id = $1');
+    assert.deepStrictEqual(queries[0].params, ['b-1', 'Novo Nome', 'novo nome']);
+    mode = 'missing';
+    assert.strictEqual(await bandRepository.rename({ bandId: 'x', name: 'N', nameNormalized: 'n' }), false);
+    mode = 'duplicate';
+    await assert.rejects(
+      () => bandRepository.rename({ bandId: 'b-1', name: 'Repetido', nameNormalized: 'repetido' }),
+      (error) => error instanceof DuplicateError && error.field === 'band_name'
+    );
+    console.log('✅ Repositório PG: renomear banda é parametrizado e mapeia a violação de unicidade.');
+  }
+
   // 8. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'setflow-mig-'));

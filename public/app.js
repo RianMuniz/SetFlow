@@ -153,7 +153,7 @@ function renderHome() {
         <span><strong>${escapeHtml(band.name)}</strong><small class="muted">${band.memberCount} membro(s) · ${roleLabel(band.role)}</small></span>
         <span class="band-meta">${active ? '<span class="badge ok">Ativa</span>' : ''}<span class="chevron" aria-hidden="true">›</span></span>
       </button>
-      ${open ? `<div class="band-members" id="band-members-${band.id}">${bandMembersHtml(band.id)}${active ? '' : `<button class="secondary" type="button" data-switch-band="${band.id}">Usar esta banda</button>`}</div>` : ''}
+      ${open ? `<div class="band-members" id="band-members-${band.id}">${bandMembersHtml(band.id)}${band.role === 'leader' || !active ? `<div class="band-actions">${band.role === 'leader' ? `<button class="secondary" type="button" data-rename-band="${band.id}">Editar nome</button>` : ''}${active ? '' : `<button class="secondary" type="button" data-switch-band="${band.id}">Usar esta banda</button>`}</div>` : ''}</div>` : ''}
     </div>`;
   }).join('');
   $('#content').innerHTML = `
@@ -217,6 +217,15 @@ function openBandForm() {
   formModal('Nova banda', '<label>Nome da banda<input name="name" maxlength="60" required></label>', async (form) => {
     const data = await api('/api/bandas', { method: 'POST', body: { name: form.get('name') } });
     await loadBands(); state.band = state.bands.find((band) => band.id === data.band.id); await loadBandData(); render(); showToast('Banda criada.');
+  });
+}
+
+function openBandRename(bandId) {
+  const target = state.bands.find((band) => band.id === bandId);
+  if (!target) return;
+  formModal('Editar nome da banda', `<label>Nome da banda<input name="name" maxlength="60" required value="${escapeHtml(target.name)}"></label>`, async (form) => {
+    await api(`/api/bandas/${bandId}`, { method: 'PUT', body: { name: form.get('name') } });
+    await loadBands(); render(); showToast('Nome da banda atualizado.');
   });
 }
 
@@ -459,6 +468,8 @@ document.addEventListener('click', async (event) => {
   }
   const screen = event.target.closest('[data-screen]');
   if (screen) { state.screen = screen.dataset.screen; if (state.screen === 'history') await loadBandData(); render(); return; }
+  const rename = event.target.closest('[data-rename-band]');
+  if (rename) { openBandRename(rename.dataset.renameBand); return; }
   const toggle = event.target.closest('[data-toggle-band]');
   if (toggle) { await toggleBand(toggle.dataset.toggleBand); return; }
   const band = event.target.closest('[data-switch-band]');

@@ -133,6 +133,24 @@ function createMemoryRepositories(options = {}) {
       return { id: memberId, bandId, userId, role };
     },
 
+    // false: banda inexistente. O nome continua único por criador (mesma regra da criação).
+    async rename({ bandId, name, nameNormalized }) {
+      const band = bands.get(bandId);
+      if (!band) {
+        return false;
+      }
+
+      for (const other of bands.values()) {
+        if (other.id !== bandId && other.createdByUserId === band.createdByUserId && other.nameNormalized === nameNormalized) {
+          throw new DuplicateError('band_name');
+        }
+      }
+
+      band.name = name;
+      band.nameNormalized = nameNormalized;
+      return true;
+    },
+
     async updateTransitionThreshold(bandId, threshold) {
       const band = bands.get(bandId);
       if (!band) {

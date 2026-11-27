@@ -1,0 +1,340 @@
+diff
+--- a/README.md	2026-11-25 23:41:36.344866728 +0000
++++ b/README.md	2026-11-27 00:37:01.831820925 +0000
+@@ -44,6 +44,7 @@
+ - `POST /api/bandas`
+ - `GET /api/bandas`
+ - `GET /api/bandas/:bandId`
++- `PUT /api/bandas/:bandId` (líder; `{ name }`; edita o nome da banda)
+ - `POST /api/bandas/:bandId/membros`
+ - `POST /api/bandas/:bandId/ativa`
+ - `POST /api/bandas/:bandId/musicas`
+diff
+--- a/docs/requisitos.md	2026-11-25 23:41:36.346887231 +0000
++++ b/docs/requisitos.md	2026-11-27 00:37:01.831695227 +0000
+@@ -10,6 +10,8 @@
+ 
+ RF-03 Vínculo de músico à banda. WHEN o líder adiciona um músico a uma banda, o sistema SHALL vincular esse usuário como músico daquela banda.
+ 
++RF-02A Edição do nome da banda. WHEN o líder altera o nome de uma banda, o sistema SHALL atualizar o nome para todos os membros, aplicando as mesmas regras da criação (obrigatório, até 60 caracteres e único entre as bandas criadas pelo líder, sem diferenciar maiúsculas de minúsculas). IF o usuário não for o líder da banda, THEN o sistema SHALL impedir a alteração.
++
+ RF-04 Troca de contexto entre bandas. WHEN um usuário pertence a mais de uma banda, o sistema SHALL permitir alternar entre as bandas às quais pertence, exibindo apenas os dados da banda selecionada.
+ 
+ RF-05 Cadastro de música. WHEN o líder cadastra uma música em uma banda, o sistema SHALL armazenar tom, BPM, duração, observações e a cifra anexada.
+diff
+--- a/docs/sdd-open-questions.md	2026-11-25 23:41:36.346957365 +0000
++++ b/docs/sdd-open-questions.md	2026-11-27 00:37:01.831919410 +0000
+@@ -30,6 +30,7 @@
+ - **Cifra anexada (RF-05/RF-15):** **resolvida** — arquivo PDF, PNG, JPG ou TXT de até 5 MB, um por música, guardado em `music_chord_files` (PostgreSQL), tipo validado pelo conteúdo, download liberado a qualquer membro da banda e alteração restrita ao líder. O campo de texto `cifraAnexo` é mantido apenas para dados antigos.
+ - **Recuperação de senha:** **resolvida** — link de uso único por e-mail (256 bits, hash SHA-256 no banco, validade de 30 minutos, novo pedido invalida o anterior), resposta `202` idêntica para contas existentes e inexistentes, limite de 3 pedidos por IP + e-mail em 15 minutos, encerramento de todas as sessões ao redefinir. Sem provedor de e-mail no projeto, o envio é plugável e o padrão grava a mensagem no log do servidor.
+ - **Inclusão de músicas após a criação do setlist (RF-11A):** **resolvida** — só o líder, só em Rascunho (setlist Confirmado precisa ser reaberto antes), músicas da própria banda, sem repetir músicas já presentes (409 `MUSIC_ALREADY_IN_SETLIST`), acrescentadas ao final na mesma transação, com duração total e alerta de tempo recalculados.
++- **Edição do nome da banda (RF-02A):** **resolvida** — só o líder; mesmas validações da criação (obrigatório, até 60 caracteres, espaços colapsados) e mesma unicidade por criador sem diferenciar maiúsculas (409 `BAND_NAME_ALREADY_EXISTS`); salvar o nome atual ou mudar só maiúsculas/minúsculas é permitido.
+ - **Contexto ativo:** **resolvida** — endpoint dedicado `POST /api/bandas/:bandId/ativa`, armazenado em sessão do servidor e revalidado contra o vínculo.
+ 
+ ## Decisões fechadas na SPEC-001
+diff
+--- a/package.json	2026-11-25 23:41:36.344807072 +0000
++++ b/package.json	2026-11-27 00:37:01.832343513 +0000
+@@ -5,7 +5,7 @@
+   "main": "src/server.js",
+   "scripts": {
+     "start": "node src/server.js",
+-    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/cookieSecurity.test.js && node src/tests/cookieSecureHttp.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistAddItems.test.js && node src/tests/setlistAddMusic.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/frontend.test.js",
++    "test": "node src/tests/authService.test.js && node src/tests/authHttp.test.js && node src/tests/passwordResetUnit.test.js && node src/tests/passwordReset.test.js && node src/tests/csrf.test.js && node src/tests/cookieSecurity.test.js && node src/tests/cookieSecureHttp.test.js && node src/tests/setlistService.test.js && node src/tests/setlistSuggestion.test.js && node src/tests/setlistLifecycle.test.js && node src/tests/bandService.test.js && node src/tests/musicService.test.js && node src/tests/musicHttp.test.js && node src/tests/chordFile.test.js && node src/tests/setlistDraftService.test.js && node src/tests/setlistHttp.test.js && node src/tests/setlistAddItems.test.js && node src/tests/setlistAddMusic.test.js && node src/tests/setlistHistory.test.js && node src/tests/mastery.test.js && node src/tests/masteryHttp.test.js && node src/tests/nickname.test.js && node src/tests/pgRepositories.test.js && node src/tests/bandHttp.test.js && node src/tests/bandRename.test.js && node src/tests/frontend.test.js",
+     "db:migrate": "node src/migrate.js",
+     "test:pg": "node src/tests/pg/pgIntegration.test.js"
+   },
+diff
+--- a/public/app.js	2026-11-25 23:41:36.393236987 +0000
++++ b/public/app.js	2026-11-27 00:37:01.831424269 +0000
+@@ -153,7 +153,7 @@
+         <span><strong>${escapeHtml(band.name)}</strong><small class="muted">${band.memberCount} membro(s) · ${roleLabel(band.role)}</small></span>
+         <span class="band-meta">${active ? '<span class="badge ok">Ativa</span>' : ''}<span class="chevron" aria-hidden="true">›</span></span>
+       </button>
+-      ${open ? `<div class="band-members" id="band-members-${band.id}">${bandMembersHtml(band.id)}${active ? '' : `<button class="secondary" type="button" data-switch-band="${band.id}">Usar esta banda</button>`}</div>` : ''}
++      ${open ? `<div class="band-members" id="band-members-${band.id}">${bandMembersHtml(band.id)}${band.role === 'leader' || !active ? `<div class="band-actions">${band.role === 'leader' ? `<button class="secondary" type="button" data-rename-band="${band.id}">Editar nome</button>` : ''}${active ? '' : `<button class="secondary" type="button" data-switch-band="${band.id}">Usar esta banda</button>`}</div>` : ''}</div>` : ''}
+     </div>`;
+   }).join('');
+   $('#content').innerHTML = `
+@@ -220,6 +220,15 @@
+   });
+ }
+ 
++function openBandRename(bandId) {
++  const target = state.bands.find((band) => band.id === bandId);
++  if (!target) return;
++  formModal('Editar nome da banda', `<label>Nome da banda<input name="name" maxlength="60" required value="${escapeHtml(target.name)}"></label>`, async (form) => {
++    await api(`/api/bandas/${bandId}`, { method: 'PUT', body: { name: form.get('name') } });
++    await loadBands(); render(); showToast('Nome da banda atualizado.');
++  });
++}
++
+ function openThresholdForm() {
+   formModal('Limiar de transição', `<label>Semitons<input name="value" type="number" min="0" max="12" value="${state.band.transitionThresholdSemitones}" required></label>`, async (form) => {
+     await api(`/api/bandas/${state.band.id}/limiar-transicao`, { method: 'PUT', body: { limiarTransicaoSemitons: Number(form.get('value')) } });
+@@ -459,6 +468,8 @@
+   }
+   const screen = event.target.closest('[data-screen]');
+   if (screen) { state.screen = screen.dataset.screen; if (state.screen === 'history') await loadBandData(); render(); return; }
++  const rename = event.target.closest('[data-rename-band]');
++  if (rename) { openBandRename(rename.dataset.renameBand); return; }
+   const toggle = event.target.closest('[data-toggle-band]');
+   if (toggle) { await toggleBand(toggle.dataset.toggleBand); return; }
+   const band = event.target.closest('[data-switch-band]');
+diff
+--- a/public/styles.css	2026-11-25 23:41:36.347627576 +0000
++++ b/public/styles.css	2026-11-27 00:37:01.831573915 +0000
+@@ -31,6 +31,7 @@
+ .band-meta { display: flex; align-items: center; gap: 10px; }
+ .chevron { font-size: 22px; color: var(--muted); transition: transform .15s ease; }
+ .band-item.open .chevron { transform: rotate(90deg); }
++.band-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+ .band-members { display: grid; gap: 12px; padding: 12px 16px 16px; border-top: 1px solid var(--line); }
+ .member-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+ .member-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; overflow-wrap: anywhere; }
+diff
+--- a/src/bandApi.js	2026-11-25 23:41:36.347818933 +0000
++++ b/src/bandApi.js	2026-11-27 00:37:01.830986531 +0000
+@@ -92,6 +92,47 @@
+     }
+   });
+ 
++  // Edição do nome: só o líder; mesmas regras de validação e unicidade da criação (RF-02).
++  router.put('/:bandId', async (request, response, next) => {
++    try {
++      const band = await loadBandForMember(request);
++
++      if (band.role !== 'leader') {
++        throw createError(403, 'LEADER_REQUIRED', 'Apenas o líder pode editar o nome da banda.');
++      }
++
++      const { name } = bodyOf(request);
++      const nameError = validateBandName(name);
++
++      if (nameError) {
++        throw createError(400, 'VALIDATION_ERROR', nameError);
++      }
++
++      let renamed;
++      try {
++        renamed = await bandRepository.rename({
++          bandId: band.id,
++          name: sanitizeBandName(name),
++          nameNormalized: bandNameKey(name)
++        });
++      } catch (error) {
++        if (error instanceof DuplicateError && error.field === 'band_name') {
++          throw createError(409, 'BAND_NAME_ALREADY_EXISTS', 'Você já possui uma banda com este nome.');
++        }
++        throw error;
++      }
++
++      if (!renamed) {
++        throw createError(404, 'BAND_NOT_FOUND', 'Banda não encontrada.');
++      }
++
++      const updated = await bandRepository.findForUser(band.id, request.auth.user.id);
++      response.status(200).json({ band: updated });
++    } catch (error) {
++      next(error);
++    }
++  });
++
+   router.post('/:bandId/membros', async (request, response, next) => {
+     try {
+       const band = await loadBandForMember(request);
+diff
+--- a/src/repositories/memoryRepositories.js	2026-11-25 23:41:36.348279178 +0000
++++ b/src/repositories/memoryRepositories.js	2026-11-27 00:37:01.830474884 +0000
+@@ -133,6 +133,24 @@
+       return { id: memberId, bandId, userId, role };
+     },
+ 
++    // false: banda inexistente. O nome continua único por criador (mesma regra da criação).
++    async rename({ bandId, name, nameNormalized }) {
++      const band = bands.get(bandId);
++      if (!band) {
++        return false;
++      }
++
++      for (const other of bands.values()) {
++        if (other.id !== bandId && other.createdByUserId === band.createdByUserId && other.nameNormalized === nameNormalized) {
++          throw new DuplicateError('band_name');
++        }
++      }
++
++      band.name = name;
++      band.nameNormalized = nameNormalized;
++      return true;
++    },
++
+     async updateTransitionThreshold(bandId, threshold) {
+       const band = bands.get(bandId);
+       if (!band) {
+diff
+--- a/src/repositories/pgRepositories.js	2026-11-25 23:41:36.348369245 +0000
++++ b/src/repositories/pgRepositories.js	2026-11-27 00:37:01.830807960 +0000
+@@ -288,6 +288,24 @@
+       });
+     },
+ 
++    // false: banda inexistente. A UNIQUE (created_by_user_id, name_normalized) garante a regra.
++    rename({ bandId, name, nameNormalized }) {
++      return guarded(async () => {
++        try {
++          const result = await pool.query(
++            'UPDATE bands SET name = $2, name_normalized = $3 WHERE id = $1',
++            [bandId, name, nameNormalized]
++          );
++          return result.rowCount > 0;
++        } catch (error) {
++          if (error && error.code === UNIQUE_VIOLATION && error.constraint === 'bands_creator_name_unique') {
++            throw new DuplicateError('band_name');
++          }
++          throw error;
++        }
++      });
++    },
++
+     updateTransitionThreshold(bandId, threshold) {
+       return guarded(async () => {
+         const { rows } = await pool.query(
+diff
+--- a/src/tests/bandRename.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/tests/bandRename.test.js	2026-11-27 00:37:01.832015182 +0000
+@@ -0,0 +1,83 @@
++const assert = require('assert');
++const { createAuthApp, request, extractCookieValue, withServer } = require('./httpTestUtils');
++const { createMemoryRepositories } = require('../repositories/memoryRepositories');
++
++console.log('🧪 Iniciando testes HTTP da edição do nome da banda...\n');
++
++(async function main() {
++  const app = createAuthApp({ repositories: createMemoryRepositories(), isProduction: false });
++
++  await withServer(app, async ({ port }) => {
++    let sequence = 0;
++    const call = (cookie, method, path, body) => request({ port, method, path, body, headers: cookie ? { Cookie: cookie } : {} });
++
++    async function signUp(prefix) {
++      sequence += 1;
++      const nickname = `${prefix}${sequence}`;
++      const response = await call(null, 'POST', '/api/auth/register', { nickname, email: `${nickname}@teste.com`, password: 'senha1234' });
++      assert.strictEqual(response.status, 201);
++      return { cookie: extractCookieValue(response.headers['set-cookie'], 'setflow_session'), nickname };
++    }
++
++    const leader = await signUp('lider');
++    const musician = await signUp('musico');
++    const outsider = await signUp('fora');
++    const bandA = (await call(leader.cookie, 'POST', '/api/bandas', { name: 'Banda A' })).json.band.id;
++    const bandB = (await call(leader.cookie, 'POST', '/api/bandas', { name: 'Banda B' })).json.band.id;
++    await call(leader.cookie, 'POST', `/api/bandas/${bandA}/membros`, { nickname: musician.nickname });
++    const rename = (cookie, bandId, name) => call(cookie, 'PUT', `/api/bandas/${bandId}`, { name });
++
++    // ---- sucesso
++    const renamed = await rename(leader.cookie, bandA, '  Os   Cifrados  ');
++    assert.strictEqual(renamed.status, 200);
++    assert.strictEqual(renamed.json.band.name, 'Os Cifrados');
++    assert.strictEqual(renamed.json.band.role, 'leader');
++    assert.strictEqual(renamed.json.band.memberCount, 2);
++    const asMember = await call(musician.cookie, 'GET', `/api/bandas/${bandA}`);
++    assert.strictEqual(asMember.json.band.name, 'Os Cifrados', 'membros veem o novo nome');
++    const list = await call(leader.cookie, 'GET', '/api/bandas');
++    assert.deepStrictEqual(list.json.bands.map((band) => band.name).sort(), ['Banda B', 'Os Cifrados']);
++    console.log('✅ Líder renomeia a banda (espaços ajustados) e os membros veem o novo nome.');
++
++    // ---- o próprio nome continua permitido
++    assert.strictEqual((await rename(leader.cookie, bandA, 'Os Cifrados')).status, 200);
++    assert.strictEqual((await rename(leader.cookie, bandA, 'OS CIFRADOS')).json.band.name, 'OS CIFRADOS');
++    console.log('✅ Salvar o mesmo nome ou mudar só maiúsculas/minúsculas é permitido.');
++
++    // ---- unicidade por criador
++    const duplicate = await rename(leader.cookie, bandB, 'os cifrados');
++    assert.strictEqual(duplicate.status, 409);
++    assert.strictEqual(duplicate.json.error.code, 'BAND_NAME_ALREADY_EXISTS');
++    assert.strictEqual((await call(leader.cookie, 'GET', `/api/bandas/${bandB}`)).json.band.name, 'Banda B');
++    await call(outsider.cookie, 'POST', '/api/bandas', { name: 'Nome Livre' });
++    assert.strictEqual((await rename(leader.cookie, bandB, 'Nome Livre')).status, 200, 'o nome só precisa ser único entre as bandas do mesmo criador');
++    console.log('✅ Nome repetido entre bandas do mesmo líder é recusado; outro criador pode usar o mesmo nome.');
++
++    // ---- validação
++    for (const invalid of ['', '   ', 'x'.repeat(61), 123, null, undefined]) {
++      const response = await rename(leader.cookie, bandA, invalid);
++      assert.strictEqual(response.status, 400, `nome inválido: ${String(invalid)}`);
++      assert.strictEqual(response.json.error.code, 'VALIDATION_ERROR');
++    }
++    assert.strictEqual((await rename(leader.cookie, bandA, 'x'.repeat(60))).status, 200);
++    assert.strictEqual((await call(leader.cookie, 'GET', `/api/bandas/${bandA}`)).json.band.name, 'x'.repeat(60));
++    console.log('✅ Nome vazio, em branco, acima de 60 caracteres ou não textual é recusado.');
++
++    // ---- permissões
++    const asMusician = await rename(musician.cookie, bandA, 'Golpe');
++    assert.strictEqual(asMusician.status, 403);
++    assert.strictEqual(asMusician.json.error.code, 'LEADER_REQUIRED');
++    const asOutsider = await rename(outsider.cookie, bandA, 'Golpe');
++    assert.strictEqual(asOutsider.status, 403);
++    assert.strictEqual(asOutsider.json.error.code, 'BAND_ACCESS_DENIED');
++    assert.strictEqual((await rename(leader.cookie, 'b-inexistente', 'Golpe')).status, 404);
++    assert.strictEqual((await rename(null, bandA, 'Golpe')).status, 401);
++    assert.strictEqual((await call(leader.cookie, 'GET', `/api/bandas/${bandA}`)).json.band.name, 'x'.repeat(60), 'tentativas recusadas não alteram o nome');
++    console.log('✅ Só o líder renomeia; músico, fora da banda e sem sessão são barrados.');
++  });
++
++  console.log('\n🎉 Todos os testes da edição do nome da banda passaram com sucesso!');
++})().catch((error) => {
++  console.error(error);
++  process.exit(1);
++});
+diff
+--- a/src/tests/frontend.test.js	2026-11-25 23:41:36.393411710 +0000
++++ b/src/tests/frontend.test.js	2026-11-27 00:37:01.832440960 +0000
+@@ -24,6 +24,8 @@
+     assert.match(script.body, /\/api\/auth\/password-reset\/request/);
+     assert.match(script.body, /handleSessionLost/);
+     assert.match(script.body, /data-toggle-band/);
++    assert.match(script.body, /data-rename-band/);
++    assert.match(script.body, /method: 'PUT', body: \{ name: form\.get\('name'\) \}/);
+     assert.strictEqual((script.body.match(/data-action="new-band"/g) || []).length, 1, 'só um botão de criar banda na tela inicial');
+     assert.match(script.body, /data-add-open/);
+     assert.match(script.body, /\/musicas`, \{ method: 'POST', body: \{ musicaIds/);
+diff
+--- a/src/tests/pgRepositories.test.js	2026-11-25 23:41:36.349258806 +0000
++++ b/src/tests/pgRepositories.test.js	2026-11-27 00:37:01.832150006 +0000
+@@ -323,6 +323,36 @@
+     console.log('✅ Repositório PG: token de uso único atômico, troca de senha e limpeza de sessões.');
+   }
+ 
++  // 7e. Edição do nome da banda: UPDATE parametrizado e unicidade por criador
++  {
++    const queries = [];
++    let mode = 'ok';
++    const pool = {
++      async query(text, params) {
++        queries.push({ text: String(text), params });
++        if (mode === 'duplicate') {
++          const error = new Error('duplicate key');
++          error.code = '23505';
++          error.constraint = 'bands_creator_name_unique';
++          throw error;
++        }
++        return { rows: [], rowCount: mode === 'missing' ? 0 : 1 };
++      }
++    };
++    const { bandRepository } = createPgRepositories(pool, { logger: silent });
++    assert.strictEqual(await bandRepository.rename({ bandId: 'b-1', name: 'Novo Nome', nameNormalized: 'novo nome' }), true);
++    assert.strictEqual(queries[0].text, 'UPDATE bands SET name = $2, name_normalized = $3 WHERE id = $1');
++    assert.deepStrictEqual(queries[0].params, ['b-1', 'Novo Nome', 'novo nome']);
++    mode = 'missing';
++    assert.strictEqual(await bandRepository.rename({ bandId: 'x', name: 'N', nameNormalized: 'n' }), false);
++    mode = 'duplicate';
++    await assert.rejects(
++      () => bandRepository.rename({ bandId: 'b-1', name: 'Repetido', nameNormalized: 'repetido' }),
++      (error) => error instanceof DuplicateError && error.field === 'band_name'
++    );
++    console.log('✅ Repositório PG: renomear banda é parametrizado e mapeia a violação de unicidade.');
++  }
++
+   // 8. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
+   {
+     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'setflow-mig-'));

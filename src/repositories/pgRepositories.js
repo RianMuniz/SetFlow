@@ -288,6 +288,24 @@ function createPgRepositories(pool, options = {}) {
       });
     },
 
+    // false: banda inexistente. A UNIQUE (created_by_user_id, name_normalized) garante a regra.
+    rename({ bandId, name, nameNormalized }) {
+      return guarded(async () => {
+        try {
+          const result = await pool.query(
+            'UPDATE bands SET name = $2, name_normalized = $3 WHERE id = $1',
+            [bandId, name, nameNormalized]
+          );
+          return result.rowCount > 0;
+        } catch (error) {
+          if (error && error.code === UNIQUE_VIOLATION && error.constraint === 'bands_creator_name_unique') {
+            throw new DuplicateError('band_name');
+          }
+          throw error;
+        }
+      });
+    },
+
     updateTransitionThreshold(bandId, threshold) {
       return guarded(async () => {
         const { rows } = await pool.query(

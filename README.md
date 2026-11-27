@@ -44,6 +44,7 @@ Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickna
 - `POST /api/bandas`
 - `GET /api/bandas`
 - `GET /api/bandas/:bandId`
+- `PUT /api/bandas/:bandId` (líder; `{ name }`; edita o nome da banda)
 - `POST /api/bandas/:bandId/membros`
 - `POST /api/bandas/:bandId/ativa`
 - `POST /api/bandas/:bandId/musicas`

@@ -92,6 +92,47 @@ function createBandRouter({ bandRepository, userRepository, requireAuthenticatio
     }
   });
 
+  // Edição do nome: só o líder; mesmas regras de validação e unicidade da criação (RF-02).
+  router.put('/:bandId', async (request, response, next) => {
+    try {
+      const band = await loadBandForMember(request);
+
+      if (band.role !== 'leader') {
+        throw createError(403, 'LEADER_REQUIRED', 'Apenas o líder pode editar o nome da banda.');
+      }
+
+      const { name } = bodyOf(request);
+      const nameError = validateBandName(name);
+
+      if (nameError) {
+        throw createError(400, 'VALIDATION_ERROR', nameError);
+      }
+
+      let renamed;
+      try {
+        renamed = await bandRepository.rename({
+          bandId: band.id,
+          name: sanitizeBandName(name),
+          nameNormalized: bandNameKey(name)
+        });
+      } catch (error) {
+        if (error instanceof DuplicateError && error.field === 'band_name') {
+          throw createError(409, 'BAND_NAME_ALREADY_EXISTS', 'Você já possui uma banda com este nome.');
+        }
+        throw error;
+      }
+
+      if (!renamed) {
+        throw createError(404, 'BAND_NOT_FOUND', 'Banda não encontrada.');
+      }
+
+      const updated = await bandRepository.findForUser(band.id, request.auth.user.id);
+      response.status(200).json({ band: updated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post('/:bandId/membros', async (request, response, next) => {
     try {
       const band = await loadBandForMember(request);

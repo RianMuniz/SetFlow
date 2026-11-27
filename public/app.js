@@ -161,9 +161,9 @@ function renderHome() {
       <span class="eyebrow">OLÁ, ${escapeHtml(state.user.nickname || '')}</span>
       <h2>${state.band ? escapeHtml(state.band.name) : 'Crie sua primeira banda'}</h2>
       <p class="muted">${state.band ? 'Escolha uma área para continuar.' : 'Comece organizando seu repertório.'}</p>
-      ${state.band?.role === 'leader' ? `<button class="secondary" data-action="new-band">+ Nova banda</button>` : ''}
+      <button class="secondary" data-action="new-band">+ Nova banda</button>
     </div>
-    <div class="toolbar"><h2>Minhas bandas</h2><button class="secondary" data-action="new-band">Adicionar</button></div>
+    <div class="toolbar"><h2>Minhas bandas</h2></div>
     <div class="grid">${bandOptions || '<div class="card empty">Nenhuma banda cadastrada.</div>'}</div>
     ${state.band?.role === 'leader' ? `<div class="card" style="margin-top:12px"><div class="toolbar"><div><h3>Limiar de transição</h3><small class="muted">Atual: ${state.band.transitionThresholdSemitones} semitons</small></div><button class="secondary" data-action="threshold">Editar</button></div><button class="secondary" data-action="member" style="width:100%">+ Adicionar músico</button></div>` : ''}`;
 }

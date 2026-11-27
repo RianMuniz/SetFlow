@@ -24,6 +24,7 @@ const { createAuthApp, withServer, request } = require('./httpTestUtils');
     assert.match(script.body, /\/api\/auth\/password-reset\/request/);
     assert.match(script.body, /handleSessionLost/);
     assert.match(script.body, /data-toggle-band/);
+    assert.strictEqual((script.body.match(/data-action="new-band"/g) || []).length, 1, 'só um botão de criar banda na tela inicial');
     assert.match(script.body, /data-add-open/);
     assert.match(script.body, /\/musicas`, \{ method: 'POST', body: \{ musicaIds/);
     assert.match(script.body, /aria-expanded/);

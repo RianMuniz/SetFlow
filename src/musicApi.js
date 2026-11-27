@@ -1,6 +1,12 @@
 const express = require('express');
 const { createError } = require('./httpErrors');
 const { createMusic, setBandThreshold } = require('./musicService');
+const {
+  MAX_CHORD_FILE_BYTES,
+  detectChordFileType,
+  sanitizeFileName,
+  contentDispositionFor
+} = require('./chordFile');
 
 function createMusicRouter({ bandRepository, musicRepository, requireAuthentication, newId }) {
   const router = express.Router({ mergeParams: true });
@@ -31,7 +37,7 @@ function createMusicRouter({ bandRepository, musicRepository, requireAuthenticat
     }
   }
 
-  function musicPayload(request, bandId, id) {
+  function musicPayload(request, bandId, id, current = null) {
     const body = bodyOf(request);
     try {
       return createMusic({
@@ -42,7 +48,8 @@ function createMusicRouter({ bandRepository, musicRepository, requireAuthenticat
         bpm: body.bpm,
         duracaoSegundos: body.duracaoSegundos,
         observacoes: body.observacoes,
-        cifraAnexo: body.cifraAnexo
+        // Edição sem o campo preserva o texto antigo; a cifra em arquivo tem rota própria.
+        cifraAnexo: body.cifraAnexo !== undefined ? body.cifraAnexo : (current ? current.cifraAnexo : undefined)
       });
     } catch (error) {
       throw createError(400, 'VALIDATION_ERROR', error.message);
@@ -100,8 +107,81 @@ function createMusicRouter({ bandRepository, musicRepository, requireAuthenticat
         throw createError(404, 'MUSIC_NOT_FOUND', 'Música não encontrada.');
       }
 
-      const song = await musicRepository.update(musicPayload(request, band.id, current.id));
+      const song = await musicRepository.update(musicPayload(request, band.id, current.id, current));
       response.status(200).json({ music: song });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Cifra em arquivo (RF-05/RF-15): corpo bruto, tipo decidido pelo conteúdo, até 5 MB.
+  // O nome original vai no cabeçalho X-File-Name (URL-encoded).
+  const receiveChordFile = express.raw({ type: () => true, limit: MAX_CHORD_FILE_BYTES });
+
+  router.put('/musicas/:musicId/cifra', receiveChordFile, async (request, response, next) => {
+    try {
+      const band = await loadBand(request);
+      requireLeader(band);
+      const current = await musicRepository.findForBand(request.params.musicId, band.id);
+      if (!current) {
+        throw createError(404, 'MUSIC_NOT_FOUND', 'Música não encontrada.');
+      }
+
+      const content = request.body;
+      if (!Buffer.isBuffer(content) || content.length === 0) {
+        throw createError(400, 'VALIDATION_ERROR', 'Envie o arquivo da cifra no corpo da requisição.');
+      }
+
+      const type = detectChordFileType(content);
+      if (!type) {
+        throw createError(415, 'UNSUPPORTED_FILE_TYPE', 'Formato não suportado. Use PDF, PNG, JPG ou TXT.');
+      }
+
+      const cifraArquivo = await musicRepository.saveChordFile({
+        musicId: current.id,
+        bandId: band.id,
+        fileName: sanitizeFileName(request.get('x-file-name'), type),
+        contentType: type,
+        content
+      });
+      response.status(200).json({ cifraArquivo });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/musicas/:musicId/cifra', async (request, response, next) => {
+    try {
+      const band = await loadBand(request);
+      const file = await musicRepository.findChordFile(request.params.musicId, band.id);
+      if (!file) {
+        throw createError(404, 'CHORD_FILE_NOT_FOUND', 'Esta música não possui cifra anexada.');
+      }
+
+      response.status(200);
+      response.set({
+        'Content-Type': file.tipo === 'text/plain' ? 'text/plain; charset=utf-8' : file.tipo,
+        'Content-Length': String(file.conteudo.length),
+        'Content-Disposition': contentDispositionFor(file.nome),
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-store'
+      });
+      response.end(file.conteudo);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete('/musicas/:musicId/cifra', async (request, response, next) => {
+    try {
+      const band = await loadBand(request);
+      requireLeader(band);
+      const removed = await musicRepository.deleteChordFile(request.params.musicId, band.id);
+      if (!removed) {
+        throw createError(404, 'CHORD_FILE_NOT_FOUND', 'Esta música não possui cifra anexada.');
+      }
+
+      response.status(200).json({ cifraArquivo: null });
     } catch (error) {
       next(error);
     }

@@ -48,8 +48,25 @@ function mapMusic(row) {
     bpm: Number(row.bpm),
     duracaoSegundos: Number(row.duration_seconds),
     observacoes: row.notes,
-    cifraAnexo: row.chord_attachment
+    cifraAnexo: row.chord_attachment,
+    cifraArquivo: row.chord_file_name
+      ? { nome: row.chord_file_name, tipo: row.chord_file_type, tamanhoBytes: Number(row.chord_file_size) }
+      : null
   };
+}
+
+// Música com os metadados da cifra anexada (o conteúdo do arquivo nunca entra nas listagens).
+const MUSIC_SELECT = 'SELECT m.id, m.band_id, m.title, m.key, m.bpm, m.duration_seconds, m.notes, m.chord_attachment, '
+  + 'f.file_name AS chord_file_name, f.content_type AS chord_file_type, f.size_bytes AS chord_file_size '
+  + 'FROM music m LEFT JOIN music_chord_files f ON f.music_id = m.id ';
+
+function formatDateOnly(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const pad = (number) => String(number).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  }
+
+  return value;
 }
 
 function mapSetlist(row, items = []) {
@@ -61,7 +78,7 @@ function mapSetlist(row, items = []) {
     id: row.id,
     bandaId: row.band_id,
     nome: row.name,
-    data: row.event_date,
+    data: formatDateOnly(row.event_date),
     tempoDisponivelSegundos: Number(row.available_seconds),
     estado: row.state,
     musicas: items
@@ -148,6 +165,16 @@ function createPgRepositories(pool, options = {}) {
           }
           throw error;
         }
+      });
+    },
+
+    updatePassword(userId, { passwordHash, passwordSalt }) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          `UPDATE users SET password_hash = $2, password_salt = $3 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
+          [userId, passwordHash, passwordSalt]
+        );
+        return mapUser(rows[0]);
       });
     }
   };
@@ -289,8 +316,7 @@ function createPgRepositories(pool, options = {}) {
     listForBand(bandId) {
       return guarded(async () => {
         const { rows } = await pool.query(
-          'SELECT id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment '
-          + 'FROM music WHERE band_id = $1 ORDER BY created_at, id',
+          MUSIC_SELECT + 'WHERE m.band_id = $1 ORDER BY m.created_at, m.id',
           [bandId]
         );
         return rows.map(mapMusic);
@@ -300,8 +326,7 @@ function createPgRepositories(pool, options = {}) {
     findForBand(musicId, bandId) {
       return guarded(async () => {
         const { rows } = await pool.query(
-          'SELECT id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment '
-          + 'FROM music WHERE id = $1 AND band_id = $2',
+          MUSIC_SELECT + 'WHERE m.id = $1 AND m.band_id = $2',
           [musicId, bandId]
         );
         return mapMusic(rows[0]);
@@ -312,11 +337,57 @@ function createPgRepositories(pool, options = {}) {
       return guarded(async () => {
         const { rows } = await pool.query(
           'UPDATE music SET title = $3, key = $4, bpm = $5, duration_seconds = $6, notes = $7, chord_attachment = $8 '
-          + 'WHERE id = $1 AND band_id = $2 '
-          + 'RETURNING id, band_id, title, key, bpm, duration_seconds, notes, chord_attachment',
+          + 'WHERE id = $1 AND band_id = $2 RETURNING id',
           [song.id, song.bandaId, song.titulo, song.tom, song.bpm, song.duracaoSegundos, song.observacoes, song.cifraAnexo]
         );
-        return mapMusic(rows[0]);
+        if (!rows[0]) {
+          return null;
+        }
+
+        const current = await pool.query(MUSIC_SELECT + 'WHERE m.id = $1 AND m.band_id = $2', [song.id, song.bandaId]);
+        return mapMusic(current.rows[0]);
+      });
+    },
+
+    saveChordFile({ musicId, bandId, fileName, contentType, content }) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'INSERT INTO music_chord_files (music_id, file_name, content_type, size_bytes, content) '
+          + 'SELECT m.id, $3::text, $4::text, $5::integer, $6::bytea FROM music m WHERE m.id = $1 AND m.band_id = $2 '
+          + 'ON CONFLICT (music_id) DO UPDATE SET file_name = EXCLUDED.file_name, '
+          + 'content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, '
+          + 'content = EXCLUDED.content, uploaded_at = now() '
+          + 'RETURNING file_name, content_type, size_bytes',
+          [musicId, bandId, fileName, contentType, content.length, content]
+        );
+        const row = rows[0];
+        return row ? { nome: row.file_name, tipo: row.content_type, tamanhoBytes: Number(row.size_bytes) } : null;
+      });
+    },
+
+    findChordFile(musicId, bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'SELECT f.file_name, f.content_type, f.size_bytes, f.content '
+          + 'FROM music_chord_files f JOIN music m ON m.id = f.music_id '
+          + 'WHERE f.music_id = $1 AND m.band_id = $2',
+          [musicId, bandId]
+        );
+        const row = rows[0];
+        return row
+          ? { nome: row.file_name, tipo: row.content_type, tamanhoBytes: Number(row.size_bytes), conteudo: row.content }
+          : null;
+      });
+    },
+
+    deleteChordFile(musicId, bandId) {
+      return guarded(async () => {
+        const result = await pool.query(
+          'DELETE FROM music_chord_files f USING music m '
+          + 'WHERE f.music_id = m.id AND f.music_id = $1 AND m.band_id = $2',
+          [musicId, bandId]
+        );
+        return result.rowCount > 0;
       });
     }
   };
@@ -406,6 +477,29 @@ function createPgRepositories(pool, options = {}) {
       });
     },
 
+    listDraftsForBand(bandId) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          "SELECT id, band_id, name, event_date, available_seconds, state FROM setlists "
+          + "WHERE band_id = $1 AND state = 'Rascunho' ORDER BY event_date, id",
+          [bandId]
+        );
+        return Promise.all(rows.map(async (row) => {
+          const items = await pool.query(
+            'SELECT id, music_id, order_position FROM setlist_items '
+            + 'WHERE setlist_id = $1 ORDER BY order_position',
+            [row.id]
+          );
+          return mapSetlist(row, items.rows.map((item) => ({
+            id: item.id,
+            setlistId: row.id,
+            musicaId: item.music_id,
+            ordem: item.order_position
+          })));
+        }));
+      });
+    },
+
     updateOrder(setlistId, bandId, items) {
       return guarded(async () => {
         const client = await pool.connect();
@@ -432,6 +526,62 @@ function createPgRepositories(pool, options = {}) {
           }
           await client.query('COMMIT');
           return mapSetlist(current.rows[0], items);
+        } catch (error) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (rollbackError) {
+            rollbackFailed = true;
+          }
+          throw error;
+        } finally {
+          client.release(rollbackFailed ? true : undefined);
+        }
+      });
+    },
+
+    // Acrescenta músicas ao final de um rascunho, na mesma transação e com a linha do setlist
+    // bloqueada (FOR UPDATE): pedidos simultâneos não geram posições repetidas.
+    addItems(setlistId, bandId, items) {
+      return guarded(async () => {
+        const client = await pool.connect();
+        let rollbackFailed = false;
+
+        try {
+          await client.query('BEGIN');
+          const current = await client.query(
+            'SELECT id, band_id, name, event_date, available_seconds, state '
+            + 'FROM setlists WHERE id = $1 AND band_id = $2 FOR UPDATE',
+            [setlistId, bandId]
+          );
+          if (!current.rows[0] || current.rows[0].state !== 'Rascunho') {
+            await client.query('ROLLBACK');
+            return null;
+          }
+
+          const last = await client.query(
+            'SELECT COALESCE(MAX(order_position), 0) AS last FROM setlist_items WHERE setlist_id = $1',
+            [setlistId]
+          );
+          let position = Number(last.rows[0].last);
+          for (const item of items) {
+            position += 1;
+            await client.query(
+              'INSERT INTO setlist_items (id, setlist_id, music_id, order_position) VALUES ($1, $2, $3, $4)',
+              [item.id, setlistId, item.musicaId, position]
+            );
+          }
+
+          const all = await client.query(
+            'SELECT id, music_id, order_position FROM setlist_items WHERE setlist_id = $1 ORDER BY order_position',
+            [setlistId]
+          );
+          await client.query('COMMIT');
+          return mapSetlist(current.rows[0], all.rows.map((row) => ({
+            id: row.id,
+            setlistId,
+            musicaId: row.music_id,
+            ordem: row.order_position
+          })));
         } catch (error) {
           try {
             await client.query('ROLLBACK');
@@ -561,6 +711,40 @@ function createPgRepositories(pool, options = {}) {
       return guarded(async () => {
         await pool.query('DELETE FROM sessions WHERE id = $1', [id]);
       });
+    },
+
+    deleteByUserId(userId) {
+      return guarded(async () => {
+        await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      });
+    }
+  };
+
+  // Redefinição de senha: só o hash do token é guardado; cada usuário tem um token ativo.
+  const passwordResetRepository = {
+    replaceForUser({ tokenHash, userId, createdAt, expiresAt }) {
+      return guarded(async () => {
+        await pool.query(
+          'DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < $2::timestamptz',
+          [userId, createdAt]
+        );
+        await pool.query(
+          'INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)',
+          [tokenHash, userId, createdAt, expiresAt]
+        );
+      });
+    },
+
+    // Atômico: o UPDATE condicional garante uso único mesmo com requisições simultâneas.
+    consume(tokenHash, nowIso) {
+      return guarded(async () => {
+        const { rows } = await pool.query(
+          'UPDATE password_reset_tokens SET used_at = $2::timestamptz '
+          + 'WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2::timestamptz RETURNING user_id',
+          [tokenHash, nowIso]
+        );
+        return rows[0] ? rows[0].user_id : null;
+      });
     }
   };
 
@@ -570,7 +754,8 @@ function createPgRepositories(pool, options = {}) {
     musicRepository,
     setlistRepository,
     masteryRepository,
-    sessionRepository
+    sessionRepository,
+    passwordResetRepository
   };
 }
 

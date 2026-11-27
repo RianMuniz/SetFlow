@@ -26,6 +26,8 @@ RF-10 Verificação de duração do setlist. WHEN o líder informa o tempo dispo
 
 RF-11 Reordenação manual. WHEN o líder reordena manualmente as músicas de um setlist em Rascunho, o sistema SHALL atualizar a ordem e recalcular as sinalizações de transição.
 
+RF-11A Inclusão de músicas no rascunho. WHEN o líder adiciona músicas a um setlist em Rascunho, o sistema SHALL acrescentá-las ao final, sem repetir músicas já presentes, e recalcular a duração total e o alerta de tempo. IF o setlist não estiver em Rascunho, THEN o sistema SHALL impedir a alteração (para editar um setlist Confirmado, o líder o reabre antes).
+
 RF-12 Confirmação de setlist. WHEN o líder confirma um setlist, o sistema SHALL alterar seu estado para Confirmado e torná-lo visível aos músicos da banda.
 
 RF-13 Marcação de setlist como tocado. WHEN o líder marca um setlist Confirmado como utilizado, o sistema SHALL alterar seu estado para Tocado. IF o setlist não estiver Confirmado, THEN o sistema SHALL impedir a transição direta para Tocado.

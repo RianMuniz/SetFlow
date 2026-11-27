@@ -238,6 +238,91 @@ const input = { bandId: 'b-1', memberId: 'm-1', name: 'Banda', nameNormalized: '
     console.log('✅ Sessões no PostgreSQL mantêm o mapeamento de activeBandId e campos de sessão.');
   }
 
+  // 7b. DATE do PostgreSQL chega como Date (fuso local): a API entrega 'YYYY-MM-DD'
+  {
+    const pool = {
+      async query(text) {
+        if (String(text).includes('FROM setlists')) {
+          return { rows: [{ id: 'sl-1', band_id: 'b-1', name: 'Show', event_date: new Date(2026, 10, 20), available_seconds: '3600', state: 'Confirmado' }] };
+        }
+        return { rows: [{ id: 'i-1', music_id: 'm-1', order_position: 1 }] };
+      }
+    };
+    const { setlistRepository } = createPgRepositories(pool, { logger: silent });
+    const [setlist] = await setlistRepository.listConfirmedForBand('b-1');
+    assert.strictEqual(setlist.data, '2026-11-20');
+    assert.strictEqual(setlist.tempoDisponivelSegundos, 3600);
+    console.log('✅ Data do setlist vinda do PostgreSQL é entregue como YYYY-MM-DD.');
+  }
+
+  // 7c. Cifra em arquivo: metadados nas músicas, sem carregar o conteúdo nas listagens
+  {
+    const queries = [];
+    const musicRow = {
+      id: 'm-1', band_id: 'b-1', title: 'T', key: 'C', bpm: '100', duration_seconds: '180', notes: '', chord_attachment: '',
+      chord_file_name: 'a.pdf', chord_file_type: 'application/pdf', chord_file_size: '2048'
+    };
+    const pool = {
+      async query(text, params) {
+        queries.push({ text: String(text), params });
+        if (String(text).startsWith('INSERT INTO music_chord_files')) {
+          return { rows: [{ file_name: 'a.pdf', content_type: 'application/pdf', size_bytes: 3 }] };
+        }
+        if (String(text).startsWith('SELECT f.file_name')) {
+          return { rows: [{ file_name: 'a.pdf', content_type: 'application/pdf', size_bytes: 3, content: Buffer.from('abc') }] };
+        }
+        return { rows: [musicRow] };
+      }
+    };
+    const { musicRepository } = createPgRepositories(pool, { logger: silent });
+    const song = await musicRepository.findForBand('m-1', 'b-1');
+    assert.deepStrictEqual(song.cifraArquivo, { nome: 'a.pdf', tipo: 'application/pdf', tamanhoBytes: 2048 });
+    await musicRepository.listForBand('b-1');
+    assert.ok(queries.every((query) => !/f\.content[ ,]/.test(query.text)), 'listagens não devem ler o conteúdo do arquivo');
+    assert.ok(queries[0].text.includes('LEFT JOIN music_chord_files'));
+
+    const saved = await musicRepository.saveChordFile({
+      musicId: 'm-1', bandId: 'b-1', fileName: 'a.pdf', contentType: 'application/pdf', content: Buffer.from('abc')
+    });
+    assert.deepStrictEqual(saved, { nome: 'a.pdf', tipo: 'application/pdf', tamanhoBytes: 3 });
+    const insert = queries.find((query) => query.text.startsWith('INSERT INTO music_chord_files'));
+    assert.ok(insert.text.includes('::bytea') && Buffer.isBuffer(insert.params[5]));
+    const file = await musicRepository.findChordFile('m-1', 'b-1');
+    assert.ok(Buffer.isBuffer(file.conteudo) && file.conteudo.toString() === 'abc');
+    console.log('✅ Repositório PG mapeia metadados da cifra e grava/lê o arquivo como bytea.');
+  }
+
+  // 7d. Redefinição de senha: token de uso único (UPDATE condicional) e troca de senha
+  {
+    const queries = [];
+    const pool = {
+      async query(text, params) {
+        queries.push({ text: String(text), params });
+        if (String(text).startsWith('UPDATE password_reset_tokens')) {
+          return { rows: [{ user_id: 'u-1' }] };
+        }
+        if (String(text).startsWith('UPDATE users')) {
+          return { rows: [{ id: 'u-1', nickname: 'n', email: 'a@b.com', password_hash: 'h2', password_salt: 's2', status: 'active' }] };
+        }
+        return { rows: [] };
+      }
+    };
+    const { passwordResetRepository, userRepository, sessionRepository } = createPgRepositories(pool, { logger: silent });
+    await passwordResetRepository.replaceForUser({
+      tokenHash: 'th', userId: 'u-1', createdAt: '2026-11-19T12:00:00.000Z', expiresAt: '2026-11-19T12:30:00.000Z'
+    });
+    assert.ok(queries[0].text.startsWith('DELETE FROM password_reset_tokens') && queries[0].params[0] === 'u-1');
+    assert.ok(queries[1].text.startsWith('INSERT INTO password_reset_tokens') && queries[1].params[0] === 'th');
+    assert.strictEqual(await passwordResetRepository.consume('th', '2026-11-19T12:01:00.000Z'), 'u-1');
+    assert.ok(queries[2].text.includes('used_at IS NULL') && queries[2].text.includes('expires_at > $2'));
+    const updated = await userRepository.updatePassword('u-1', { passwordHash: 'h2', passwordSalt: 's2' });
+    assert.strictEqual(updated.passwordHash, 'h2');
+    assert.deepStrictEqual(queries[3].params, ['u-1', 'h2', 's2']);
+    await sessionRepository.deleteByUserId('u-1');
+    assert.strictEqual(queries[queries.length - 1].text, 'DELETE FROM sessions WHERE user_id = $1');
+    console.log('✅ Repositório PG: token de uso único atômico, troca de senha e limpeza de sessões.');
+  }
+
   // 8. Runner de migração: aplica pendentes em ordem e pula as já aplicadas
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'setflow-mig-'));

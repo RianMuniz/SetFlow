@@ -50,9 +50,13 @@ Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickna
 - `GET /api/bandas/:bandId/musicas`
 - `PUT /api/bandas/:bandId/musicas/:musicId`
 - `PUT /api/bandas/:bandId/limiar-transicao`
+- `PUT /api/bandas/:bandId/musicas/:musicId/cifra` (líder; corpo = arquivo; nome em `X-File-Name`)
+- `GET /api/bandas/:bandId/musicas/:musicId/cifra` (qualquer membro da banda)
+- `DELETE /api/bandas/:bandId/musicas/:musicId/cifra` (líder)
 - `POST /api/bandas/:bandId/setlists`
 - `POST /api/bandas/:bandId/setlists/:setlistId/sugestao`
 - `PUT /api/bandas/:bandId/setlists/:setlistId/ordem`
+- `POST /api/bandas/:bandId/setlists/:setlistId/musicas` (líder; só rascunho; `{ musicaIds }`; entram ao final)
 - `POST /api/bandas/:bandId/setlists/:setlistId/confirmar`
 - `POST /api/bandas/:bandId/setlists/:setlistId/reabrir`
 - `POST /api/bandas/:bandId/setlists/:setlistId/tocar`
@@ -60,6 +64,26 @@ Ver `docs/specs/SPEC-001-*.md` e `docs/specs/SPEC-002-*.md` (cadastro com nickna
 - `GET /api/bandas/:bandId/setlists-confirmados`
 - `GET /api/bandas/:bandId/setlists/:setlistId/visualizacao`
 - `PUT /api/bandas/:bandId/musicas/:musicId/dominio`
+
+## Acessar pelo celular (rede local)
+
+Com `docker compose up`, o app abre no PC em `http://localhost:3000` e, no celular na mesma rede Wi-Fi, em `http://IP-DO-PC:3000` (descubra o IP com `ipconfig` no Windows; se não abrir, libere a porta 3000 no firewall).
+
+O cookie de sessão usa `Secure` em produção, e `Secure` só funciona em HTTPS ou em `localhost`. Por isso o `docker-compose.yml` define `COOKIE_SECURE: "false"` (HTTP puro). Se você publicar atrás de HTTPS, volte para `"true"` (ou remova a variável). Cada usuário mantém **uma sessão por vez** (SPEC-001): entrar em outro dispositivo encerra a sessão do primeiro, que volta para a tela de login.
+
+## Esqueci minha senha
+
+Na tela de login, **"Esqueci minha senha"** pede o e-mail da conta. Se ele estiver cadastrado, o sistema gera um link de uso único, válido por **30 minutos**, no formato `APP_BASE_URL/#reset=<token>`. Abrir o link mostra o formulário de nova senha (8 a 128 caracteres); ao concluir, **todas as sessões da conta são encerradas** e o usuário entra com a nova senha.
+
+- **Sem enumeração de contas:** `POST /api/auth/password-reset/request` responde sempre `202` com a mesma mensagem. Limite: 3 pedidos por `IP + e-mail` em 15 minutos.
+- **Token seguro:** 256 bits aleatórios; no banco fica só o hash SHA-256 (`password_reset_tokens`). Um novo pedido invalida o anterior. O token vai no fragmento da URL (`#`), que não chega ao servidor nem aparece em logs de acesso.
+- **Envio do e-mail:** o projeto ainda não tem provedor de e-mail. O padrão é o *console mailer*, que **escreve a mensagem, com o link, no log do servidor**: `docker compose logs app` (ou o terminal do `npm start`). Para enviar e-mail de verdade, passe outro objeto `{ send({ to, subject, text }) }` em `createAuthApp({ mailer })` (veja `src/mailer.js`). Defina `APP_BASE_URL` com o endereço público do sistema.
+
+Endpoints: `POST /api/auth/password-reset/request` (`{ email }`) e `POST /api/auth/password-reset/confirm` (`{ token, password }`; erro `400 INVALID_RESET_TOKEN` para link inválido, expirado ou já usado).
+
+## Cifra anexada
+
+O líder anexa à música um arquivo **PDF, PNG, JPG ou TXT de até 5 MB**. O tipo é conferido pelo conteúdo do arquivo (HTML, SVG e outros formatos são recusados) e o arquivo fica no PostgreSQL (`music_chord_files`), então o Docker Compose não precisa de volume extra. Todos os membros da banda podem abrir a cifra no repertório e no setlist confirmado.
 
 ## Executar localmente
 

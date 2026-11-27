@@ -16,6 +16,7 @@
         <button class="segment active" data-auth-mode="login">Entrar</button>
         <button class="segment" data-auth-mode="register">Criar conta</button>
       </div>
+      <p id="auth-info" class="success"></p>
       <form id="auth-form" class="card form-stack">
         <label id="nickname-field" class="hidden">Nickname<input name="nickname" autocomplete="nickname"></label>
         <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
@@ -23,6 +24,7 @@
         <button class="primary" type="submit" id="auth-submit">Entrar</button>
         <p id="auth-error" class="error"></p>
       </form>
+      <p class="auth-links"><button type="button" class="link-button" id="forgot-password" data-action="forgot-password">Esqueci minha senha</button></p>
     </section>
 
     <section id="main-view" class="hidden">

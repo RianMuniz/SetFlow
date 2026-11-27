@@ -27,6 +27,9 @@ Todas as decisões relevantes da baseline foram aprovadas e registradas conforme
 - **Nome de banda duplicado (EX-01 da SPEC-002):** **resolvida** — rejeitar somente quando o mesmo criador já possui o nome normalizado.
 - **Identificador para adicionar membros:** **resolvida** — nickname globalmente único.
 - **Membro duplicado:** **resolvida** — `409 MEMBER_ALREADY_EXISTS`.
+- **Cifra anexada (RF-05/RF-15):** **resolvida** — arquivo PDF, PNG, JPG ou TXT de até 5 MB, um por música, guardado em `music_chord_files` (PostgreSQL), tipo validado pelo conteúdo, download liberado a qualquer membro da banda e alteração restrita ao líder. O campo de texto `cifraAnexo` é mantido apenas para dados antigos.
+- **Recuperação de senha:** **resolvida** — link de uso único por e-mail (256 bits, hash SHA-256 no banco, validade de 30 minutos, novo pedido invalida o anterior), resposta `202` idêntica para contas existentes e inexistentes, limite de 3 pedidos por IP + e-mail em 15 minutos, encerramento de todas as sessões ao redefinir. Sem provedor de e-mail no projeto, o envio é plugável e o padrão grava a mensagem no log do servidor.
+- **Inclusão de músicas após a criação do setlist (RF-11A):** **resolvida** — só o líder, só em Rascunho (setlist Confirmado precisa ser reaberto antes), músicas da própria banda, sem repetir músicas já presentes (409 `MUSIC_ALREADY_IN_SETLIST`), acrescentadas ao final na mesma transação, com duração total e alerta de tempo recalculados.
 - **Contexto ativo:** **resolvida** — endpoint dedicado `POST /api/bandas/:bandId/ativa`, armazenado em sessão do servidor e revalidado contra o vínculo.
 
 ## Decisões fechadas na SPEC-001
@@ -41,4 +44,4 @@ Todas as decisões relevantes da baseline foram aprovadas e registradas conforme
 
 ## Situação final
 
-A baseline foi estabilizada para a implementação das Specs. Permanecem em aberto somente questões não resolvidas pelos documentos de atualização, como recuperação de senha, MFA, backup, observabilidade, deploy, versionamento de API, concorrência, validação de BPM e estratégia de remoção.
+A baseline foi estabilizada para a implementação das Specs. Permanecem em aberto somente questões não resolvidas pelos documentos de atualização, como MFA, backup, observabilidade, deploy, versionamento de API, concorrência, validação de BPM e estratégia de remoção.

@@ -61,10 +61,12 @@ async function assertDatabaseReady(pool) {
     'bands',
     'band_members',
     'music',
+    'music_chord_files',
     'setlists',
     'setlist_items',
     'music_mastery',
-    'sessions'
+    'sessions',
+    'password_reset_tokens'
   ];
   const columns = expectedTables
     .map((table) => `to_regclass('${table}') AS ${table}`)

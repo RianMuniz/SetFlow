@@ -40,7 +40,7 @@
 
 ### Fora do escopo
 
-- Recuperação de senha, MFA, SSO e autenticação social.
+- MFA, SSO e autenticação social. (A recuperação de senha, antes fora de escopo, foi incluída depois: ver README, "Esqueci minha senha".)
 - Gestão de banda, repertório, setlist e demais Specs (SPEC-002+).
 
 ## 4. Contratos HTTP implementados
